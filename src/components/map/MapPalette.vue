@@ -2,17 +2,16 @@
 // =====================================================================
 // MapPalette.vue — logika drag palet didelegasikan ke src/core/useMapPaletteDrag.ts.
 // =====================================================================
-import type { MapNodeInput, MapRole, MapTemplate } from '../../types.ts'
+import type { MapNodeInput, MapRole } from '../../types.ts'
 import {
   ROLES,
   SHAPE_DEFS,
   PARTICLES,
   TEMPLATES,
-  useMapStore,
 } from '../../composables/useMapStore.ts'
-import { useConfirm } from '../../composables/useConfirm.ts'
 import { useMapPaletteDrag } from '../../core/useMapPaletteDrag.ts'
 import { normalizeCanvasApi } from '../../core/useMapNodePlacement.ts'
+import { useMapTemplate } from '../../core/useMapTemplate.ts'
 import type MapCanvas from './MapCanvas.vue'
 
 const props = defineProps<{
@@ -20,8 +19,8 @@ const props = defineProps<{
   canvasRef?: InstanceType<typeof MapCanvas> | null
 }>()
 
-const { nodes, applyTemplate } = useMapStore()
-const { confirmDialog } = useConfirm()
+/* ---------- Terapkan template (core) ---------- */
+const { onTemplate } = useMapTemplate()
 
 /* ---------- Drag dari palet ke kanvas (core) ---------- */
 const canvasApi = () => normalizeCanvasApi(props.canvasRef)
@@ -49,20 +48,7 @@ function onParticleClick(p: string) {
   canvasApi()?.addCentered({ role: 'joshi', shape: 'elips', text: p, w: 110, h: 56 }, false)
 }
 
-/* ---------- Template ---------- */
-async function onTemplate(tpl: MapTemplate) {
-  if (nodes.value.length > 0) {
-    const ok = await confirmDialog({
-      title: 'Ganti isi kanvas?',
-      message: `Template "${tpl.label}" (${tpl.sample}) akan mengganti seluruh isi peta saat ini.`,
-      confirmText: 'Terapkan',
-      cancelText: 'Batal',
-      danger: false,
-    })
-    if (!ok) return
-  }
-  applyTemplate(tpl)
-}
+/* ---------- Template (core/useMapTemplate.ts) ---------- */
 </script>
 
 <template>
