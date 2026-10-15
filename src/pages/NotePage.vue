@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useNoteStore } from '../composables/useNoteStore.js'
+import { useNoteStore } from '../composables/useNoteStore.ts'
 
 const { content, loading, saving, saveError, lastSavedAt, loadNote, scheduleSave } =
   useNoteStore()
@@ -37,20 +37,20 @@ const IMG_DEFAULT_WIDTH = 360
 const IMG_API = '/api/note/image'
 
 /* ---------- State UI ---------- */
-const editorEl = ref(null)
+const editorEl = ref<HTMLDivElement | null>(null)
 const charCount = ref(0)
-const openPop = ref(null) // 'color' | 'mark' | null
+const openPop = ref<'color' | 'mark' | null>(null)
 const currentFont = ref(FONT_OPTIONS[0].value)
 const currentSize = ref(16)
 const lastColor = ref('#3c4046')
 const lastMark = ref('#ffe9a8')
 
 /* ---------- Gambar ---------- */
-const imageInputEl = ref(null)
+const imageInputEl = ref<HTMLInputElement | null>(null)
 const uploadingImage = ref(false)
-const selectedImg = ref(null) // elemen <img> yang sedang dipilih
+const selectedImg = ref<HTMLImageElement | null>(null) // elemen <img> yang sedang dipilih
 const selectedImgWidth = ref(IMG_DEFAULT_WIDTH)
-const resizeHandleEl = ref(null)
+const resizeHandleEl = ref<HTMLDivElement | null>(null)
 
 /** Posisikan handle resize di sudut kanan-bawah gambar terpilih. */
 function positionResizeHandle() {
@@ -71,7 +71,7 @@ watch([selectedImg, selectedImgWidth], async () => {
 })
 
 /** Bookmark seleksi teks di dalam editor (agar tidak hilang saat klik toolbar). */
-let savedRange = null
+let savedRange: Range | null = null
 
 function selectionInEditor() {
   const sel = window.getSelection()
@@ -114,20 +114,20 @@ function afterApply() {
   scheduleSave()
 }
 
-function applyFontFamily(value) {
+function applyFontFamily(value: string) {
   currentFont.value = value
   if (!prepareApply()) return
   document.execCommand('fontName', false, value)
   afterApply()
 }
 
-function applyFontSize(px) {
+function applyFontSize(px: number) {
   currentSize.value = px
   if (!prepareApply()) return
   // execCommand hanya mendukung skala 1-7 → trik: buat font size=7
   // lalu ganti tag-nya dengan span berukuran px yang kita inginkan.
   document.execCommand('fontSize', false, '7')
-  editorEl.value?.querySelectorAll('font[size="7"]').forEach((f) => {
+  editorEl.value?.querySelectorAll<HTMLElement>('font[size="7"]').forEach((f) => {
     const span = document.createElement('span')
     span.style.fontSize = `${px}px`
     while (f.firstChild) span.appendChild(f.firstChild)
@@ -136,7 +136,7 @@ function applyFontSize(px) {
   afterApply()
 }
 
-function applyColor(hex) {
+function applyColor(hex: string) {
   lastColor.value = hex
   openPop.value = null
   if (!prepareApply()) return
@@ -144,7 +144,7 @@ function applyColor(hex) {
   afterApply()
 }
 
-function applyHighlight(hex) {
+function applyHighlight(hex: string) {
   lastMark.value = hex
   openPop.value = null
   if (!prepareApply()) return
@@ -164,15 +164,15 @@ function triggerImagePick() {
   imageInputEl.value?.click()
 }
 
-function currentImgWidth(img) {
+function currentImgWidth(img: HTMLImageElement) {
   const attr = Number(img.getAttribute('width'))
   if (Number.isFinite(attr) && attr > 0) return Math.round(attr)
   const w = Math.round(img.getBoundingClientRect().width)
   return w > 0 ? w : IMG_DEFAULT_WIDTH
 }
 
-function markImgSelected(img) {
-  editorEl.value?.querySelectorAll('img.is-selected').forEach((el) => el.classList.remove('is-selected'))
+function markImgSelected(img: HTMLImageElement | null) {
+  editorEl.value?.querySelectorAll<HTMLImageElement>('img.is-selected').forEach((el) => el.classList.remove('is-selected'))
   selectedImg.value = img ?? null
   if (img) {
     img.classList.add('is-selected')
@@ -186,9 +186,10 @@ const imgPresetLabel = computed(() => {
   return hit ? hit.label : ''
 })
 
-async function onImageFile(e) {
-  const file = e.target.files?.[0]
-  e.target.value = ''
+async function onImageFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
   if (!file) return
   if (!/^image\/(png|jpeg|gif|webp)$/i.test(file.type)) {
     saveError.value = 'Format tidak didukung. Gunakan PNG, JPG, GIF, atau WebP.'
@@ -207,13 +208,13 @@ async function onImageFile(e) {
     if (!res.ok) throw new Error(data.error || `Gagal mengunggah gambar (HTTP ${res.status}).`)
     insertImageAtCaret(data.url)
   } catch (err) {
-    saveError.value = err.message || 'Gagal mengunggah gambar.'
+    saveError.value = (err as Error).message || 'Gagal mengunggah gambar.'
   } finally {
     uploadingImage.value = false
   }
 }
 
-function insertImageAtCaret(url) {
+function insertImageAtCaret(url: string) {
   const editor = editorEl.value
   if (!editor) return
   editor.focus()
@@ -254,13 +255,13 @@ function insertImageAtCaret(url) {
 }
 
 /* ---------- Gambar: pilih, resize, hapus ---------- */
-function onEditorClick(e) {
-  const img = e.target?.closest?.('img')
+function onEditorClick(e: MouseEvent) {
+  const img = (e.target as HTMLElement | null)?.closest?.('img') as HTMLImageElement | null
   markImgSelected(img && editorEl.value?.contains(img) ? img : null)
   if (img) e.preventDefault()
 }
 
-function applyImgWidth(px) {
+function applyImgWidth(px: number) {
   const img = selectedImg.value
   if (!img) return
   const w = Math.min(800, Math.max(80, Math.round(px)))
@@ -270,13 +271,13 @@ function applyImgWidth(px) {
   afterApply()
 }
 
-function applyImgPreset(width) {
+function applyImgPreset(width: number) {
   applyImgWidth(width)
 }
 
-let resizeDrag = null
+let resizeDrag: { startX: number; startW: number } | null = null
 
-function onResizeHandleDown(e) {
+function onResizeHandleDown(e: PointerEvent) {
   const img = selectedImg.value
   if (!img) return
   e.preventDefault()
@@ -286,7 +287,7 @@ function onResizeHandleDown(e) {
   window.addEventListener('pointerup', onResizeHandleUp, { once: true })
 }
 
-function onResizeHandleMove(e) {
+function onResizeHandleMove(e: PointerEvent) {
   if (!resizeDrag) return
   applyImgWidth(resizeDrag.startW + (e.clientX - resizeDrag.startX))
 }
@@ -305,12 +306,12 @@ function removeSelectedImg() {
   editorEl.value?.focus()
 }
 
-function togglePop(name) {
+function togglePop(name: 'color' | 'mark') {
   openPop.value = openPop.value === name ? null : name
 }
 
-function onDocPointerDown(e) {
-  if (!e.target.closest?.('.tb-pop-wrap')) openPop.value = null
+function onDocPointerDown(e: PointerEvent) {
+  if (!(e.target as HTMLElement | null)?.closest?.('.tb-pop-wrap')) openPop.value = null
 }
 
 watch(openPop, (v) => {
@@ -380,7 +381,7 @@ onBeforeUnmount(() => {
         class="tb-select"
         :value="currentFont"
         title="Jenis font"
-        @change="applyFontFamily($event.target.value)"
+        @change="applyFontFamily(($event.target as HTMLSelectElement).value)"
       >
         <option v-for="f in FONT_OPTIONS" :key="f.value" :value="f.value">{{ f.label }}</option>
       </select>
@@ -389,7 +390,7 @@ onBeforeUnmount(() => {
         class="tb-select tb-size"
         :value="currentSize"
         title="Ukuran huruf"
-        @change="applyFontSize(Number($event.target.value))"
+        @change="applyFontSize(Number(($event.target as HTMLSelectElement).value))"
       >
         <option v-for="s in SIZE_OPTIONS" :key="s" :value="s">{{ s }} px</option>
       </select>
@@ -507,7 +508,7 @@ onBeforeUnmount(() => {
           max="800"
           step="10"
           :value="selectedImgWidth"
-          @input="applyImgWidth(Number($event.target.value))"
+          @input="applyImgWidth(Number(($event.target as HTMLInputElement).value))"
         />
         <span class="img-slider-val">{{ selectedImgWidth }} px</span>
       </label>

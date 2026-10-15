@@ -2,22 +2,25 @@ import { ref, watch } from 'vue'
 
 const THEME_STORAGE_KEY = 'kotoba-theme'
 
-function getInitialTheme() {
-  let saved = null
+/** Nama tema yang didukung situs. */
+type ThemeName = 'light' | 'dark'
+
+function getInitialTheme(): ThemeName {
+  let saved: string | null = null
   try {
     saved = localStorage.getItem(THEME_STORAGE_KEY)
-  } catch (e) {
+  } catch {
     // localStorage tidak tersedia (mis. private mode) — abaikan.
   }
-  if (!saved) {
-    saved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  if (saved !== 'dark' && saved !== 'light') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }
   return saved
 }
 
-const theme = ref(getInitialTheme())
+const theme = ref<ThemeName>(getInitialTheme())
 
-function applyTheme(value) {
+function applyTheme(value: ThemeName): void {
   document.documentElement.setAttribute('data-theme', value)
 }
 
@@ -27,13 +30,13 @@ watch(theme, (value) => {
   applyTheme(value)
   try {
     localStorage.setItem(THEME_STORAGE_KEY, value)
-  } catch (e) {
+  } catch {
     // Abaikan bila penyimpanan tidak tersedia.
   }
 })
 
 export function useTheme() {
-  function toggleTheme() {
+  function toggleTheme(): void {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
   }
 

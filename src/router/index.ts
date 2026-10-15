@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import HomePage from '../pages/HomePage.vue'
 import KosakataPage from '../pages/KosakataPage.vue'
 import PetaPage from '../pages/PetaPage.vue'
@@ -6,7 +6,7 @@ import NotePage from '../pages/NotePage.vue'
 import ChatPage from '../pages/ChatPage.vue'
 import ResourcePage from '../pages/ResourcePage.vue'
 
-const routes = [
+const routes: RouteRecordRaw[] = [
   { path: '/', name: 'home', component: HomePage },
   { path: '/kosakata', name: 'kosakata', component: KosakataPage },
   { path: '/peta', name: 'peta', component: PetaPage },

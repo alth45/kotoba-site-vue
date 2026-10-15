@@ -22,17 +22,17 @@ let locked = false
 /** Debounce scroll wheel. */
 let wheelArmed = true
 
-export function hideHint() {
+export function hideHint(): void {
   hintHidden.value = true
 }
 
-export function goTo(index) {
+export function goTo(index: number): void {
   const target = Math.max(0, Math.min(PANEL_COUNT - 1, index))
   if (target === current.value) return
 
   current.value = target
 
-  const panel = document.querySelectorAll('.panel')[current.value]
+  const panel = document.querySelectorAll<HTMLElement>('.panel')[current.value]
   if (panel) panel.scrollTop = 0
 
   hideHint()
@@ -43,30 +43,30 @@ export function goTo(index) {
   }, 800)
 }
 
-export function openMenu() {
+export function openMenu(): void {
   menuOpen.value = true
 }
 
-export function closeMenu() {
+export function closeMenu(): void {
   menuOpen.value = false
 }
 
-export function toggleMenu() {
+export function toggleMenu(): void {
   menuOpen.value ? closeMenu() : openMenu()
 }
 
 /**
  * Cek apakah scroll di dalam panel masih bisa dilakukan ke arah dy.
  */
-export function canScrollInside(panel, dy) {
+export function canScrollInside(panel: HTMLElement | undefined, dy: number): boolean {
   if (!panel) return false
   if (panel.scrollHeight <= panel.clientHeight + 2) return false
   if (dy > 0) return panel.scrollTop + panel.clientHeight < panel.scrollHeight - 2
   return panel.scrollTop > 2
 }
 
-export function onWheel(e) {
-  const panels = Array.from(document.querySelectorAll('.panel'))
+export function onWheel(e: WheelEvent): void {
+  const panels = Array.from(document.querySelectorAll<HTMLElement>('.panel'))
   const p = panels[current.value]
   if (canScrollInside(p, e.deltaY)) return
   e.preventDefault()
@@ -79,24 +79,24 @@ export function onWheel(e) {
   goTo(current.value + (e.deltaY > 0 ? 1 : -1))
 }
 
-let touchY = null
+let touchY: number | null = null
 
-export function onTouchStart(e) {
+export function onTouchStart(e: TouchEvent): void {
   touchY = e.touches[0].clientY
 }
 
-export function onTouchEnd(e) {
+export function onTouchEnd(e: TouchEvent): void {
   if (touchY === null) return
   const dy = touchY - e.changedTouches[0].clientY
   touchY = null
   if (Math.abs(dy) < 55) return
-  const panels = Array.from(document.querySelectorAll('.panel'))
+  const panels = Array.from(document.querySelectorAll<HTMLElement>('.panel'))
   const p = panels[current.value]
   if (canScrollInside(p, dy)) return
   goTo(current.value + (dy > 0 ? 1 : -1))
 }
 
-export function onKeydown(e) {
+export function onKeydown(e: KeyboardEvent): void {
   if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
     e.preventDefault()
     toggleMenu()
@@ -111,7 +111,8 @@ export function onKeydown(e) {
   }
   if (menuOpen.value) return
 
-  const tag = (e.target && e.target.tagName) || ''
+  const target = e.target as HTMLElement | null
+  const tag = target?.tagName ?? ''
   if (tag === 'INPUT' || tag === 'TEXTAREA') return
 
   switch (e.key) {

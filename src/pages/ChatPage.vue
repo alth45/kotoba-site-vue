@@ -1,14 +1,15 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useChatAgent } from '../composables/useChatAgent.js'
+import { useChatAgent } from '../composables/useChatAgent.ts'
+import type { ChatMode } from '../types.ts'
 
 const router = useRouter()
 const { messages, typing, mode, aiReady, aiModel, setMode, init, send, clear, suggestionChips } =
   useChatAgent()
 
 const draft = ref('')
-const boxEl = ref(null)
+const boxEl = ref<HTMLDivElement | null>(null)
 const chips = suggestionChips()
 
 function scrollBottom(smooth = true) {
@@ -17,7 +18,7 @@ function scrollBottom(smooth = true) {
   })
 }
 
-async function onSend(text) {
+async function onSend(text: string) {
   const route = await send(text)
   draft.value = ''
   scrollBottom()
@@ -27,7 +28,7 @@ async function onSend(text) {
 }
 
 /** Render ringan: **tebal**, `kode`, dan baris baru. Aman: teks di-escape dulu. */
-function renderRich(text) {
+function renderRich(text: string) {
   const esc = String(text ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -70,7 +71,7 @@ onMounted(() => {
             class="mode-select"
             :value="mode"
             :disabled="typing"
-            @change="setMode($event.target.value)"
+            @change="setMode(($event.target as HTMLSelectElement).value as ChatMode)"
           >
             <option value="local">Lokal — tanpa jaringan AI</option>
             <option value="ai" :disabled="!aiReady">

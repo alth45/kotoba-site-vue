@@ -1,6 +1,6 @@
 <script setup>
-import { goTo } from '../composables/useNavigation.js'
-import { footerColumns } from '../data/content.js'
+import { goTo } from '../composables/useNavigation.ts'
+import { footerColumns } from '../data/content.ts'
 
 function onLinkClick(e, target) {
   e.preventDefault()

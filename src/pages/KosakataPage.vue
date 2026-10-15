@@ -1,8 +1,9 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useVocabStore } from '../composables/useVocabStore.js'
-import { useVocabPages } from '../composables/useVocabPages.js'
-import { useConfirm } from '../composables/useConfirm.js'
+import type { VocabItem } from '../types.ts'
+import { useVocabStore } from '../composables/useVocabStore.ts'
+import { useVocabPages } from '../composables/useVocabPages.ts'
+import { useConfirm } from '../composables/useConfirm.ts'
 import SearchDialog from '../components/SearchDialog.vue'
 
 const { addVocab, updateVocab, removeVocab } = useVocabStore()
@@ -36,17 +37,17 @@ const saving = ref(false)
 /* ---------- Pencarian (popup) ---------- */
 const searchOpen = ref(false)
 /** Baris yang disorot sementara setelah loncat dari hasil pencarian. */
-const highlightId = ref(null)
-let highlightTimer = null
+const highlightId = ref<number | null>(null)
+let highlightTimer: number | undefined
 
-function onSearchShortcut(e) {
+function onSearchShortcut(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
     e.preventDefault()
     searchOpen.value = !searchOpen.value
   }
 }
 
-function onSearchSelect(item) {
+function onSearchSelect(item: VocabItem) {
   const targetPage = Math.floor(item.index / PER_PAGE) + 1
   highlightId.value = item.id
   if (highlightTimer) window.clearTimeout(highlightTimer)
@@ -98,21 +99,21 @@ async function submitAdd() {
     resetForm()
     await goToPage(pageCount.value)
   } catch (e) {
-    errorMsg.value = e.message
+    errorMsg.value = (e as Error).message
   } finally {
     saving.value = false
   }
 }
 
 /* ---------- Edit (inline per baris) ---------- */
-const editingId = ref(null)
+const editingId = ref<number | null>(null)
 const draft = reactive({ jp: '', romaji: '', arti: '', kategori: 'Dasar' })
 
 const draftValid = computed(
   () => draft.jp.trim() !== '' && draft.romaji.trim() !== '' && draft.arti.trim() !== '',
 )
 
-function startEdit(item) {
+function startEdit(item: VocabItem) {
   editingId.value = item.id
   draft.jp = item.jp
   draft.romaji = item.romaji
@@ -128,6 +129,7 @@ async function saveEdit() {
   if (!draftValid.value || saving.value) return
   saving.value = true
   errorMsg.value = ''
+  if (editingId.value == null) return
   try {
     const updated = await updateVocab(editingId.value, {
       jp: draft.jp.trim(),
@@ -139,14 +141,14 @@ async function saveEdit() {
     patchCached(updated)
     editingId.value = null
   } catch (e) {
-    errorMsg.value = e.message
+    errorMsg.value = (e as Error).message
   } finally {
     saving.value = false
   }
 }
 
 /* ---------- Hapus ---------- */
-async function onDelete(item) {
+async function onDelete(item: VocabItem) {
   const ok = await confirmDialog({
     title: 'Hapus kosakata?',
     message: `Kata "${item.jp}" (${item.romaji}) akan dihapus dari daftar. Tindakan ini tidak bisa dibatalkan.`,
@@ -164,7 +166,7 @@ async function onDelete(item) {
     if (editingId.value === item.id) editingId.value = null
     await goToPage(effectivePage.value)
   } catch (e) {
-    errorMsg.value = e.message
+    errorMsg.value = (e as Error).message
   }
 }
 
@@ -180,14 +182,15 @@ const kategoriOptions = computed(() => {
 })
 
 /* ---------- Kontrol halaman (logika ada di useVocabPages) ---------- */
-function setPage(p) {
+function setPage(p: number) {
   return goToPage(p)
 }
 
 /** Nomor halaman yang ditampilkan (dengan "…" bila terlalu banyak). */
-function pageWindow(totalPages, current) {
+type PageEntry = number | '…'
+function pageWindow(totalPages: number, current: number): PageEntry[] {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
-  const pages = [1]
+  const pages: PageEntry[] = [1]
   if (current > 3) pages.push('…')
   for (let p = Math.max(2, current - 1); p <= Math.min(totalPages - 1, current + 1); p++) {
     pages.push(p)

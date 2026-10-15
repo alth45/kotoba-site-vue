@@ -1,6 +1,6 @@
 <script setup>
-import { goTo } from '../composables/useNavigation.js'
-import { heroStats } from '../data/content.js'
+import { goTo } from '../composables/useNavigation.ts'
+import { heroStats } from '../data/content.ts'
 </script>
 
 <template>

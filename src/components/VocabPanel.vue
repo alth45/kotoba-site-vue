@@ -1,6 +1,6 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted } from 'vue'
-import { useVocabStore } from '../composables/useVocabStore.js'
+import { useVocabStore } from '../composables/useVocabStore.ts'
 
 // Preview 10 baris pertama — tanpa memuat seluruh data.
 const { previewItems, previewTotal, previewLoading, previewError, loadPreview } = useVocabStore()

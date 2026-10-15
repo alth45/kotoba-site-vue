@@ -1,36 +1,39 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
-import { ROLES, SHAPE_DEFS, useMapStore } from '../../composables/useMapStore.js'
+import type { MapRole, ShapeDef } from '../../types.ts'
+import { ROLES, SHAPE_DEFS, useMapStore } from '../../composables/useMapStore.ts'
 
-const props = defineProps({
-  /** Pilihan aktif: { type: 'node'|'edge', id } atau null. */
-  selected: { type: Object, default: null },
-})
-const emit = defineEmits(['clear'])
+/** Pilihan aktif: { type: 'node'|'edge', id } atau null. */
+type Selection = { type: 'node' | 'edge'; id: string } | null
+
+const props = defineProps<{ selected?: Selection }>()
+const emit = defineEmits<{ clear: [] }>()
 
 const { nodes, edges, updateNode, removeNode, updateEdge, removeEdge } = useMapStore()
 
 const node = computed(() => {
-  if (props.selected?.type !== 'node') return null
-  return nodes.value.find((n) => n.id === props.selected.id) ?? null
+  const sel = props.selected
+  if (sel?.type !== 'node') return null
+  return nodes.value.find((n) => n.id === sel.id) ?? null
 })
 
 const edge = computed(() => {
-  if (props.selected?.type !== 'edge') return null
-  return edges.value.find((e) => e.id === props.selected.id) ?? null
+  const sel = props.selected
+  if (sel?.type !== 'edge') return null
+  return edges.value.find((e) => e.id === sel.id) ?? null
 })
 
-function onRoleChange(e) {
-  if (node.value) updateNode(node.value.id, { role: e.target.value })
+function onRoleChange(e: Event) {
+  if (node.value) updateNode(node.value.id, { role: (e.target as HTMLSelectElement).value })
 }
 
-function onShapeClick(shape) {
+function onShapeClick(shape: ShapeDef) {
   if (!node.value) return
   updateNode(node.value.id, { shape: shape.id, w: shape.w, h: shape.h })
 }
 
-function onTextInput(e) {
-  if (node.value) updateNode(node.value.id, { text: e.target.value })
+function onTextInput(e: Event) {
+  if (node.value) updateNode(node.value.id, { text: (e.target as HTMLTextAreaElement).value })
 }
 
 function deleteNode() {
@@ -39,8 +42,8 @@ function deleteNode() {
   emit('clear')
 }
 
-function onLabelInput(e) {
-  if (edge.value) updateEdge(edge.value.id, { label: e.target.value })
+function onLabelInput(e: Event) {
+  if (edge.value) updateEdge(edge.value.id, { label: (e.target as HTMLInputElement).value })
 }
 
 function flipEdge() {

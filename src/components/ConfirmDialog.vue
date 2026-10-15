@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, ref, watch } from 'vue'
-import { useConfirm } from '../composables/useConfirm.js'
+import { useConfirm } from '../composables/useConfirm.ts'
 
 const { visible, options, handleConfirm, handleCancel } = useConfirm()
 

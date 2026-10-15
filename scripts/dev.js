@@ -53,5 +53,5 @@ process.on('SIGTERM', () => {
   process.exit(0)
 })
 
-launch('api', ['server/index.js'])
+launch('api', ['node_modules/tsx/dist/cli.mjs', 'server/index.ts'])
 launch('vite', ['node_modules/vite/bin/vite.js'])

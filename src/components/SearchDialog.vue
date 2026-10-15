@@ -1,20 +1,21 @@
-<script setup>
+<script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { searchVocab } from '../composables/useVocabStore.js'
-import { PER_PAGE } from '../composables/useVocabPages.js'
+import type { VocabItem } from '../types.ts'
+import { searchVocab } from '../composables/useVocabStore.ts'
+import { PER_PAGE } from '../composables/useVocabPages.ts'
 
 const open = defineModel({ type: Boolean, default: false })
 const emit = defineEmits(['select'])
 
 const query = ref('')
-const results = ref([])
+const results = ref<VocabItem[]>([])
 const totalMatches = ref(0)
 const searching = ref(false)
 const activeIndex = ref(0)
-const inputEl = ref(null)
+const inputEl = ref<HTMLInputElement | null>(null)
 
 const DEBOUNCE_MS = 250
-let debounceTimer = null
+let debounceTimer: number | undefined
 let seq = 0
 
 async function runSearch() {
@@ -54,7 +55,7 @@ watch(open, (visible) => {
   }
 })
 
-function choose(item) {
+function choose(item: VocabItem) {
   emit('select', item)
   open.value = false
 }
@@ -63,7 +64,7 @@ function close() {
   open.value = false
 }
 
-function move(dir) {
+function move(dir: number) {
   if (results.value.length === 0) return
   activeIndex.value =
     (activeIndex.value + dir + results.value.length) % results.value.length
@@ -72,7 +73,7 @@ function move(dir) {
     ?.scrollIntoView({ block: 'nearest' })
 }
 
-function onKeydown(e) {
+function onKeydown(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') {
     e.preventDefault()
     move(1)
@@ -87,7 +88,7 @@ function onKeydown(e) {
 }
 
 /** Pecah teks menjadi segmen (cocok/tidak) — highlight aman tanpa v-html. */
-function segments(text, q) {
+function segments(text: string, q: string): Array<{ text: string; hit: boolean }> {
   const source = String(text ?? '')
   const needle = q.trim().toLowerCase()
   if (!needle) return [{ text: source, hit: false }]
