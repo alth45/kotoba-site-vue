@@ -229,8 +229,9 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
       </button>
     </div>
 
-    <!-- ====== GRID ====== -->
-    <div class="link-grid-wrap">
+    <!-- ====== GRID (dalam container dengan scroll) ====== -->
+    <div class="grid-scroll-container">
+      <div class="link-grid-wrap">
       <!-- Pinned section -->
       <template v-if="pinnedLinks.length">
         <p class="section-label">
@@ -346,6 +347,7 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
       <p v-if="filtered.length === 0" class="empty-state">
         Belum ada tautan di kategori ini.
       </p>
+      </div>
     </div>
   </main>
 </template>
@@ -356,6 +358,7 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
    ================================================================ */
 .resource-page {
   min-height: 100vh;
+  height: 100vh;
   padding: clamp(24px, 5vh, 48px) clamp(20px, 5vw, 64px);
   display: flex;
   flex-direction: column;
@@ -545,16 +548,46 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
   text-transform: uppercase;
   color: var(--muted);
   margin-bottom: -8px;
+  position: sticky;
+  top: -16px;
+  z-index: 2;
+  padding: 4px 0 12px;
+  background: linear-gradient(to bottom, var(--bg) 60%, transparent);
 }
 
 /* ================================================================
    GRID
    ================================================================ */
+/* Container dengan scroll vertikal untuk area grid kartu */
+.grid-scroll-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+  padding: 16px;
+  scrollbar-width: thin;
+}
+.grid-scroll-container::-webkit-scrollbar {
+  width: 8px;
+}
+.grid-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.grid-scroll-container::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  border-radius: 999px;
+}
+.grid-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
 .link-grid-wrap {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding-bottom: 48px;
 }
 
 .link-grid {
@@ -709,5 +742,10 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
 }
 @media (max-width: 400px) {
   .link-grid { grid-template-columns: 1fr; }
+}
+/* Layar pendek / mobile: kembali ke scroll halaman biasa agar tetap nyaman */
+@media (max-height: 560px) {
+  .resource-page { height: auto; }
+  .grid-scroll-container { max-height: none; overflow-y: visible; border: none; background: none; padding: 0; }
 }
 </style>
