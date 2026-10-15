@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import type { ConfirmOptions, ResolvedConfirmOptions } from '../types.ts'
 
 /**
  * Dialog konfirmasi global (singleton, berbasis Promise).
@@ -7,7 +8,7 @@ import { ref } from 'vue'
 
 const visible = ref(false)
 
-const options = ref({
+const options = ref<ResolvedConfirmOptions>({
   title: 'Konfirmasi',
   message: '',
   confirmText: 'Ya, lanjutkan',
@@ -15,11 +16,11 @@ const options = ref({
   danger: false,
 })
 
-let resolvePromise = null
+let resolvePromise: ((value: boolean) => void) | null = null
 
 export function useConfirm() {
   /** Tampilkan dialog; resolve `true` bila dikonfirmasi, `false` bila dibatalkan. */
-  function confirmDialog(opt = {}) {
+  function confirmDialog(opt: ConfirmOptions = {}): Promise<boolean> {
     options.value = {
       title: opt.title ?? 'Konfirmasi',
       message: opt.message ?? '',
@@ -33,18 +34,18 @@ export function useConfirm() {
     })
   }
 
-  function settle(result) {
+  function settle(result: boolean): void {
     visible.value = false
     const pending = resolvePromise
     resolvePromise = null
     if (pending) pending(result)
   }
 
-  function handleConfirm() {
+  function handleConfirm(): void {
     settle(true)
   }
 
-  function handleCancel() {
+  function handleCancel(): void {
     settle(false)
   }
 

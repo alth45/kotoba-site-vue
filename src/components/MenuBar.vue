@@ -1,9 +1,9 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { menuOpen, current, closeMenu, goTo } from '../composables/useNavigation.js'
-import { useTheme } from '../composables/useTheme.js'
-import { navItems } from '../data/content.js'
+import { menuOpen, current, closeMenu, goTo } from '../composables/useNavigation.ts'
+import { useTheme } from '../composables/useTheme.ts'
+import { navItems } from '../data/content.ts'
 
 const route = useRoute()
 const router = useRouter()

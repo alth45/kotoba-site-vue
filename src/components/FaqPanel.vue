@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { faqItems } from '../data/content.js'
+import { faqItems } from '../data/content.ts'
 
 /** Indeks item FAQ yang terbuka (-1 = semua tertutup). */
 const openIndex = ref(-1)

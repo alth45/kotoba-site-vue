@@ -1,29 +1,37 @@
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
+import type { MapNodeInput, MapRole, ShapeDef, MapTemplate } from '../../types.ts'
 import {
   ROLES,
   SHAPE_DEFS,
   PARTICLES,
   TEMPLATES,
   useMapStore,
-} from '../../composables/useMapStore.js'
-import { useConfirm } from '../../composables/useConfirm.js'
+} from '../../composables/useMapStore.ts'
+import { useConfirm } from '../../composables/useConfirm.ts'
+import type MapCanvas from './MapCanvas.vue'
 
-const props = defineProps({
+/** API yang diekspos MapCanvas via defineExpose. */
+type CanvasApi = {
+  addCentered: (payload: MapNodeInput, autoEdit?: boolean) => unknown
+  tryDrop: (payload: MapNodeInput, clientX: number, clientY: number) => unknown
+} | null
+
+const props = defineProps<{
   /** Ref ke MapCanvas (defineExpose: tryDrop, addCentered). */
-  canvasRef: { type: Object, default: null },
-})
+  canvasRef?: InstanceType<typeof MapCanvas> | null
+}>()
 
 const { nodes, applyTemplate } = useMapStore()
 const { confirmDialog } = useConfirm()
 
 /* ---------- Drag dari palet ke kanvas ---------- */
-const ghost = ref(null) // { label, x, y }
+const ghost = ref<{ label: string; x: number; y: number } | null>(null)
 let pressStarted = false
 let startX = 0
 let startY = 0
 
-function payloadFor(kind, value) {
+function payloadFor(kind: string, value: string): MapNodeInput {
   if (kind === 'shape') return { shape: value, role: 'setsumei' }
   if (kind === 'role') return { role: value, shape: 'kotak' }
   return { role: 'joshi', shape: 'elips', text: value, w: 110, h: 56 }
@@ -33,20 +41,20 @@ function payloadFor(kind, value) {
  * canvasRef bisa berupa instance komponen (hasil auto-unwrap template Vue)
  * ATAU ref murni — dinormalisasi dulu supaya tryDrop/addCentered selalu terpanggil.
  */
-function canvasApi() {
-  const c = props.canvasRef
+function canvasApi(): CanvasApi {
+  const c = props.canvasRef as { value?: CanvasApi } | CanvasApi | null | undefined
   if (!c) return null
-  if (typeof c === 'object' && 'value' in c) return c.value
-  return c
+  if (typeof c === 'object' && 'value' in c) return (c as { value: CanvasApi }).value ?? null
+  return c as CanvasApi
 }
 
-function onPaletteDown(event, kind, value, label) {
+function onPaletteDown(event: PointerEvent, kind: string, value: string, label: string) {
   if (event.button !== 0) return
   pressStarted = false
   startX = event.clientX
   startY = event.clientY
 
-  const onMove = (ev) => {
+  const onMove = (ev: PointerEvent) => {
     if (!pressStarted) {
       if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return
       pressStarted = true
@@ -54,7 +62,7 @@ function onPaletteDown(event, kind, value, label) {
     ghost.value = { label, x: ev.clientX, y: ev.clientY }
   }
 
-  const onUp = (ev) => {
+  const onUp = (ev: PointerEvent) => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onUp)
@@ -80,11 +88,11 @@ function onPaletteDown(event, kind, value, label) {
 }
 
 /* ---------- Klik peran / partikel (tanpa drag) ---------- */
-function onRoleClick(role) {
+function onRoleClick(role: MapRole) {
   canvasApi()?.addCentered?.({ role: role.id, shape: 'kotak' }, true)
 }
 
-function onParticleClick(p) {
+function onParticleClick(p: string) {
   canvasApi()?.addCentered?.(
     { role: 'joshi', shape: 'elips', text: p, w: 110, h: 56 },
     false,
@@ -92,7 +100,7 @@ function onParticleClick(p) {
 }
 
 /* ---------- Template ---------- */
-async function onTemplate(tpl) {
+async function onTemplate(tpl: MapTemplate) {
   if (nodes.value.length > 0) {
     const ok = await confirmDialog({
       title: 'Ganti isi kanvas?',

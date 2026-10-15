@@ -1,5 +1,5 @@
 <script setup>
-import { hintHidden } from '../composables/useNavigation.js'
+import { hintHidden } from '../composables/useNavigation.ts'
 </script>
 
 <template>

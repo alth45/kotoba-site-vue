@@ -9,6 +9,13 @@
 // saat halaman dimuat ulang.
 // ============================================================
 import { nextTick, ref } from 'vue'
+import type {
+  ChatMessage,
+  ChatMode,
+  ChatStatusResponse,
+  VocabItem,
+  VocabListResponse,
+} from '../types.ts'
 
 const CHAT_KEY = 'kotoba-chat-history-v1'
 const CHAT_MODE_KEY = 'kotoba-chat-mode-v1'
@@ -17,16 +24,16 @@ const CHAT_API = '/api/chat'
 const CHAT_STATUS_API = '/api/chat/status'
 
 let seq = 0
-function makeId() {
+function makeId(): string {
   seq += 1
   return `m${Date.now().toString(36)}-${seq}`
 }
 
-function nowTime() {
+function nowTime(): string {
   return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
 }
 
-function greeting() {
+function greeting(): string {
   return (
     'Halo! Saya **Koto**, asisten belajar bahasa Jepang. ' +
     'Tanya arti kata, mis. `apa arti arigatou?`, atau ketik `bantuan` ' +
@@ -34,7 +41,7 @@ function greeting() {
   )
 }
 
-function helpText() {
+function helpText(): string {
   return (
     'Saya bisa membantu:\n' +
     '• Cari kosakata — contoh: `cari konnichiwa`, `apa arti terima kasih?`\n' +
@@ -45,7 +52,7 @@ function helpText() {
 }
 
 /** Ambil kata kunci pencarian dari pesan bebas. */
-function extractQuery(text) {
+function extractQuery(text: string): string {
   const t = text.trim()
   const patterns = [
     /^(?:apa\s+arti(?:nya)?|arti(?:nya)?)\s+(.+?)\??$/i,
@@ -59,39 +66,39 @@ function extractQuery(text) {
   return t
 }
 
-function suggestionChips() {
+function suggestionChips(): string[] {
   return ['apa arti arigatou?', 'cari konnichiwa', 'ada berapa kosakata?', 'bantuan']
 }
 
 
 export function useChatAgent() {
-  const messages = ref([])
+  const messages = ref<ChatMessage[]>([])
   const typing = ref(false)
   const booted = ref(false)
   /** 'local' = agen aturan tanpa jaringan · 'ai' = model TokenHarbor via proxy /api/chat. */
-  const mode = ref('local')
+  const mode = ref<ChatMode>('local')
   /** true bila server punya TOKENHARBOR_API_KEY (dicek via /api/chat/status). */
   const aiReady = ref(false)
   const aiModel = ref('')
 
-  function persist() {
+  function persist(): void {
     try {
       localStorage.setItem(CHAT_KEY, JSON.stringify(messages.value.slice(-60)))
     } catch { /* abaikan: mode privat dsb */ }
   }
 
-  function push(role, text, extra = {}) {
-    const msg = { id: makeId(), role, text, time: nowTime(), ...extra }
+  function push(role: ChatMessage['role'], text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
+    const msg: ChatMessage = { id: makeId(), role, text, time: nowTime(), ...extra }
     messages.value.push(msg)
     persist()
     return msg
   }
 
-  function pushAgent(text, extra = {}) {
+  function pushAgent(text: string, extra: Partial<ChatMessage> = {}): ChatMessage {
     return push('agent', text, extra)
   }
 
-  function init() {
+  function init(): void {
     if (booted.value) return
     booted.value = true
     try {
@@ -100,7 +107,7 @@ export function useChatAgent() {
     } catch { /* abaikan, pakai mode lokal */ }
     // Cek ketersediaan mode AI di server (tanpa kunci API ke browser).
     fetch(CHAT_STATUS_API)
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? (r.json() as Promise<ChatStatusResponse>) : null))
       .then((data) => {
         if (!data) return
         aiReady.value = Boolean(data.ai)
@@ -112,23 +119,25 @@ export function useChatAgent() {
       })
       .catch(() => { /* server mati → tetap mode lokal */ })
     try {
-      const raw = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]')
+      const raw: unknown = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]')
       if (Array.isArray(raw) && raw.length > 0) {
-        messages.value = raw.filter((m) => m && m.role && m.text)
+        messages.value = raw.filter(
+          (m): m is ChatMessage => Boolean(m && (m as ChatMessage).role && (m as ChatMessage).text),
+        )
         return
       }
     } catch { /* abaikan, pakai sapaan awal */ }
     pushAgent(greeting())
   }
 
-  function persistMode() {
+  function persistMode(): void {
     try {
       localStorage.setItem(CHAT_MODE_KEY, mode.value)
     } catch { /* abaikan: mode privat dsb */ }
   }
 
   /** Ganti mode; mode 'ai' butuh server terkonfigurasi, kalau tidak ditolak. */
-  function setMode(next) {
+  function setMode(next: ChatMode): void {
     if (next !== 'ai' && next !== 'local') return
     if (next === 'ai' && !aiReady.value) {
       pushAgent(
@@ -146,7 +155,7 @@ export function useChatAgent() {
     )
   }
 
-  function clear() {
+  function clear(): void {
     messages.value = []
     try {
       localStorage.removeItem(CHAT_KEY)
@@ -155,7 +164,7 @@ export function useChatAgent() {
   }
 
   /** Aturan lokal tanpa jaringan. Kembalikan string jawaban atau null. */
-  function localAnswer(text) {
+  function localAnswer(text: string): string | null {
     const t = text.trim().toLowerCase()
     if (!t) return null
     if (/^(halo|hai|hei|hi|hello|konnichiwa|konbanwa|ohayo)/.test(t)) {
@@ -174,12 +183,12 @@ export function useChatAgent() {
     return null
   }
 
-  function navRoute(text) {
+  function navRoute(text: string): string | null {
     const m = text.trim().toLowerCase().match(
       /^buka\s+(kosakata|catatan|peta|chat|beranda|home|faq|kontak|dasar)/,
     )
     if (!m) return null
-    const map = {
+    const map: Record<string, string> = {
       kosakata: '/kosakata',
       catatan: '/catatan',
       peta: '/peta',
@@ -193,15 +202,15 @@ export function useChatAgent() {
     return map[m[1]] ?? null
   }
 
-  async function askVocab(query, signal) {
+  async function askVocab(query: string, signal: AbortSignal): Promise<{ total: number; items: VocabItem[] }> {
     const res = await fetch(`${VOCAB_API}?q=${encodeURIComponent(query)}`, { signal })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const data = await res.json()
+    const data = (await res.json()) as Partial<VocabListResponse>
     return { total: data.total ?? 0, items: Array.isArray(data.items) ? data.items : [] }
   }
 
   /** Tanya model AI via proxy backend (kunci API tetap di server). */
-  async function askAi() {
+  async function askAi(): Promise<string> {
     const history = messages.value
       .filter((m) => m && (m.role === 'user' || m.role === 'agent') && m.text)
       .slice(-20)
@@ -215,7 +224,7 @@ export function useChatAgent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: history }),
       })
-      const data = await res.json().catch(() => ({}))
+      const data = (await res.json().catch(() => ({}))) as { error?: string; reply?: unknown }
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`)
       return String(data.reply ?? '').trim()
     } finally {
@@ -223,7 +232,7 @@ export function useChatAgent() {
     }
   }
 
-  async function send(rawText) {
+  async function send(rawText: string): Promise<string | null> {
     const text = String(rawText ?? '').trim()
     if (!text || typing.value) return null
     push('user', text)
@@ -249,11 +258,11 @@ export function useChatAgent() {
           pushAgent(reply, { via: 'ai' })
         }
       } catch (err) {
-        const timeout = err?.name === 'AbortError'
+        const timeout = (err as Error)?.name === 'AbortError'
         pushAgent(
           timeout
             ? 'Model AI tidak merespons dalam 40 detik. Coba lagi, atau pindah ke mode Lokal.'
-            : `Mode AI gagal: ${err.message || err}. Coba lagi, atau pindah ke mode Lokal.`,
+            : `Mode AI gagal: ${(err as Error).message || err}. Coba lagi, atau pindah ke mode Lokal.`,
         )
       } finally {
         clearTimeout(timer)
@@ -277,7 +286,7 @@ export function useChatAgent() {
       typing.value = true
       try {
         const res = await fetch(`${VOCAB_API}?limit=1`)
-        const data = await res.json()
+        const data = (await res.json()) as Partial<VocabListResponse>
         pushAgent(`Saat ini ada **${data.total ?? 0} kosakata** tersimpan. Mau saya carikan salah satunya?`)
       } catch {
         pushAgent('Maaf, saya tidak bisa menghitung kosakata sekarang — server tidak merespons.')

@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-
+import type { MapEdge, MapNode, MapNodeInput, MapRole, MapTemplate, ShapeDef } from '../types.ts'
 /**
  * Store dokumen peta pola kalimat Jepang.
  * Data disimpan di data/map.json lewat API /api/map (auto-save debounced).
@@ -9,7 +9,7 @@ export const CANVAS_W = 1400
 export const CANVAS_H = 900
 
 /** Peran tata bahasa Jepang — menentukan warna aksen node. */
-export const ROLES = [
+export const ROLES: MapRole[] = [
   { id: 'shugo', jp: '主語', idn: 'Subjek', color: '#8fae9d' },
   { id: 'mokuteki', jp: '目的語', idn: 'Objek', color: '#8ba3c7' },
   { id: 'jutsugo', jp: '述語', idn: 'Predikat (kata kerja)', color: '#c79a8b' },
@@ -19,19 +19,19 @@ export const ROLES = [
   { id: 'setsumei', jp: '説明', idn: 'Keterangan lain', color: '#9aa1ab' },
 ]
 
-export function roleById(id) {
+export function roleById(id: string): MapRole {
   return ROLES.find((r) => r.id === id) ?? ROLES[ROLES.length - 1]
 }
 
 /** Bentuk geometri yang tersedia di palet. */
-export const SHAPE_DEFS = [
+export const SHAPE_DEFS: ShapeDef[] = [
   { id: 'kotak', label: 'Kotak', w: 150, h: 64, radius: '8px' },
   { id: 'membulat', label: 'Membulat', w: 150, h: 64, radius: '16px' },
   { id: 'elips', label: 'Elips', w: 140, h: 74, radius: '50%' },
   { id: 'pil', label: 'Pil', w: 160, h: 50, radius: '999px' },
 ]
 
-export function shapeById(id) {
+export function shapeById(id: string): ShapeDef {
   return SHAPE_DEFS.find((s) => s.id === id) ?? SHAPE_DEFS[0]
 }
 
@@ -42,7 +42,7 @@ export const PARTICLES = ['は', 'が', 'を', 'に', 'で', 'へ', 'と', 'か�
  * Template pola kalimat siap pakai. `key` dipetakan ke id unik saat diterapkan.
  * Koordinat relatif terhadap kanvas CANVAS_W × CANVAS_H.
  */
-export const TEMPLATES = [
+export const TEMPLATES: MapTemplate[] = [
   {
     id: 'sv',
     label: 'S + V',
@@ -123,42 +123,42 @@ export const TEMPLATES = [
 
 /* ---------- State dokumen ---------- */
 
-const nodes = ref([])
-const edges = ref([])
+const nodes = ref<MapNode[]>([])
+const edges = ref<MapEdge[]>([])
 const loading = ref(false)
 const saving = ref(false)
-const saveError = ref(null)
-const lastSavedAt = ref(null)
+const saveError = ref<string | null>(null)
+const lastSavedAt = ref<Date | null>(null)
 /** Node yang sedang mengedit teks (null bila tidak). */
-const editingId = ref(null)
+const editingId = ref<string | null>(null)
 
 const AUTOSAVE_MS = 900
-let saveTimer = null
+let saveTimer: number | undefined
 let queuedSave = false
 
 let seqCounter = 0
-function uid(prefix) {
+function uid(prefix: string): string {
   seqCounter += 1
   return `${prefix}${Date.now().toString(36)}${seqCounter.toString(36)}`
 }
 
-async function loadMap() {
+async function loadMap(): Promise<void> {
   loading.value = true
   saveError.value = null
   try {
     const res = await fetch('/api/map')
     if (!res.ok) throw new Error(`Gagal memuat peta (HTTP ${res.status}).`)
-    const data = await res.json()
-    nodes.value = Array.isArray(data.nodes) ? data.nodes : []
-    edges.value = Array.isArray(data.edges) ? data.edges : []
+    const data = (await res.json()) as { nodes?: unknown; edges?: unknown }
+    nodes.value = Array.isArray(data.nodes) ? (data.nodes as MapNode[]) : []
+    edges.value = Array.isArray(data.edges) ? (data.edges as MapEdge[]) : []
   } catch (e) {
-    saveError.value = e.message
+    saveError.value = (e as Error).message
   } finally {
     loading.value = false
   }
 }
 
-async function saveMap() {
+async function saveMap(): Promise<void> {
   if (saving.value) {
     queuedSave = true // ada perubahan baru → simpan lagi setelah selesai
     return
@@ -174,7 +174,7 @@ async function saveMap() {
     if (!res.ok) throw new Error(`Gagal menyimpan (HTTP ${res.status}).`)
     lastSavedAt.value = new Date()
   } catch (e) {
-    saveError.value = e.message
+    saveError.value = (e as Error).message
   } finally {
     saving.value = false
     if (queuedSave) {
@@ -184,15 +184,15 @@ async function saveMap() {
   }
 }
 
-function scheduleSave() {
+function scheduleSave(): void {
   window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(saveMap, AUTOSAVE_MS)
 }
 
 export function useMapStore() {
-  function addNode(partial) {
-    const shape = shapeById(partial.shape)
-    const node = {
+  function addNode(partial: MapNodeInput = {}): MapNode {
+    const shape = shapeById(partial.shape ?? 'kotak')
+    const node: MapNode = {
       id: uid('n'),
       role: 'setsumei',
       shape: shape.id,
@@ -208,21 +208,21 @@ export function useMapStore() {
     return node
   }
 
-  function updateNode(id, patch) {
+  function updateNode(id: string, patch: Partial<MapNode>): void {
     const node = nodes.value.find((n) => n.id === id)
     if (!node) return
     Object.assign(node, patch)
     scheduleSave()
   }
 
-  function removeNode(id) {
+  function removeNode(id: string): void {
     nodes.value = nodes.value.filter((n) => n.id !== id)
     edges.value = edges.value.filter((e) => e.from !== id && e.to !== id)
     if (editingId.value === id) editingId.value = null
     scheduleSave()
   }
 
-  function addEdge(from, to, label = '') {
+  function addEdge(from: string, to: string, label = ''): MapEdge | null {
     if (!from || !to || from === to) return null
     if (edges.value.some((e) => (e.from === from && e.to === to) || (e.from === to && e.to === from))) {
       return null
@@ -233,19 +233,19 @@ export function useMapStore() {
     return edge
   }
 
-  function updateEdge(id, patch) {
+  function updateEdge(id: string, patch: Partial<MapEdge>): void {
     const edge = edges.value.find((e) => e.id === id)
     if (!edge) return
     Object.assign(edge, patch)
     scheduleSave()
   }
 
-  function removeEdge(id) {
+  function removeEdge(id: string): void {
     edges.value = edges.value.filter((e) => e.id !== id)
     scheduleSave()
   }
 
-  function clearAll() {
+  function clearAll(): void {
     nodes.value = []
     edges.value = []
     editingId.value = null
@@ -253,15 +253,15 @@ export function useMapStore() {
   }
 
   /** Terapkan template: ganti seluruh isi kanvas dengan layout contoh. */
-  function applyTemplate(tpl) {
-    const keyToId = {}
+  function applyTemplate(tpl: MapTemplate): void {
+    const keyToId: Record<string, string> = {}
     nodes.value = tpl.nodes.map((n) => {
       const fresh = addNodeLocal(n)
       keyToId[n.key] = fresh.id
       return fresh
     })
     edges.value = tpl.edges
-      .map(([from, to, label]) => ({
+      .map(([from, to, label]: [string, string, string?]) => ({
         id: uid('e'),
         from: keyToId[from],
         to: keyToId[to],
@@ -273,8 +273,8 @@ export function useMapStore() {
   }
 
   /** Bentuk node mentah tanpa menyentuh scheduleSave (dipakai applyTemplate). */
-  function addNodeLocal(partial) {
-    const shape = shapeById(partial.shape)
+  function addNodeLocal(partial: MapNodeInput): MapNode {
+    const shape = shapeById(partial.shape ?? 'kotak')
     return {
       id: uid('n'),
       role: 'setsumei',

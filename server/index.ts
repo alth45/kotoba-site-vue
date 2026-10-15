@@ -12,13 +12,14 @@
  * menyajikan halaman statis + fallback SPA. Jalankan: npm start
  */
 import http from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import OpenAI from 'openai'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const ROOT_DIR = path.join(__dirname, '..')
+const dirname = path.dirname(fileURLToPath(import.meta.url))
+const ROOT_DIR = path.join(dirname, '..')
 const DATA_FILE = path.join(ROOT_DIR, 'data', 'vocab.json')
 const DIST_DIR = path.join(ROOT_DIR, 'dist')
 const PORT = Number(process.env.PORT) || 3000
@@ -43,7 +44,12 @@ const NOTE_MAX_BYTES = 400_000
 /** Folder & batas upload gambar catatan. */
 const UPLOAD_DIR = path.join(ROOT_DIR, 'data', 'uploads')
 const IMG_MAX_BYTES = 3 * 1024 * 1024
-const IMG_TYPES = {
+interface ImageTypeDef {
+  mime: string
+  magic: number[][] | null
+}
+
+const IMG_TYPES: Record<string, ImageTypeDef> = {
   png: { mime: 'image/png', magic: [[0x89, 0x50, 0x4e, 0x47]] },
   jpg: { mime: 'image/jpeg', magic: [[0xff, 0xd8, 0xff]] },
   gif: { mime: 'image/gif', magic: [[0x47, 0x49, 0x46, 0x38]] },
@@ -62,7 +68,7 @@ const SEED = [
   { id: 8, jp: 'さようなら', romaji: 'sayounara', arti: 'Selamat tinggal', kategori: 'Salam' },
 ]
 
-function sendJson(res, status, body) {
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body, null, 2)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -71,28 +77,43 @@ function sendJson(res, status, body) {
   res.end(payload)
 }
 
-function normalizeItem(raw, fallbackId) {
+/** Butir kosakata di file JSON bisa saja tidak rapi — dinormalisasi saat dibaca. */
+interface VocabItem {
+  id: number
+  jp: string
+  romaji: string
+  arti: string
+  kategori: string
+  /** Posisi 0-based di daftar penuh — selalu disertakan agar sesuai tipe frontend. */
+  index: number
+}
+
+type RawItem = Record<string, unknown>
+
+function normalizeItem(raw: RawItem, index: number): VocabItem {
   return {
-    id: Number.isFinite(Number(raw.id)) ? Number(raw.id) : fallbackId,
+    // id tetap 1-based (untuk API), index posisi 0-based (untuk lompat halaman).
+    id: Number.isFinite(Number(raw.id)) ? Number(raw.id) : index + 1,
     jp: String(raw.jp ?? ''),
     romaji: String(raw.romaji ?? ''),
     arti: String(raw.arti ?? ''),
     kategori: String(raw.kategori ?? 'Dasar'),
+    index,
   }
 }
 
-async function saveVocab(list) {
+async function saveVocab(list: VocabItem[]): Promise<void> {
   await fs.mkdir(path.dirname(DATA_FILE), { recursive: true })
   const payload = JSON.stringify(list, null, 2) + '\n'
   await fs.writeFile(DATA_FILE, payload, 'utf8')
 }
 
-async function loadVocab() {
+async function loadVocab(): Promise<VocabItem[]> {
   let raw
   try {
     raw = await fs.readFile(DATA_FILE, 'utf8')
   } catch (err) {
-    if (err.code === 'ENOENT') {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       // File belum ada → buat dari data awal.
       const seed = SEED.map((item) => ({ ...item }))
       await saveVocab(seed)
@@ -100,20 +121,20 @@ async function loadVocab() {
     }
     throw err
   }
-  const parsed = JSON.parse(raw)
+  const parsed: unknown = JSON.parse(raw)
   if (!Array.isArray(parsed)) {
     throw new Error('Struktur data/vocab.json harus berupa array.')
   }
-  return parsed.map((item, i) => normalizeItem(item, i + 1))
+  return (parsed as RawItem[]).map((item, i) => normalizeItem(item, i))
 }
 
-function nextId(list) {
+function nextId(list: VocabItem[]): number {
   return list.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1
 }
 
-function readRawBody(req, maxBytes) {
+function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const chunks = []
+    const chunks: Buffer[] = []
     let size = 0
     req.on('data', (chunk) => {
       size += chunk.length
@@ -133,7 +154,13 @@ function readRawBody(req, maxBytes) {
  * Parser multipart/form-data minimal (satu file saja) tanpa dependensi.
  * Mengembalikan { filename, mime, data } atau null bila bukan multipart valid.
  */
-function parseMultipartImage(body, contentType) {
+interface ParsedImage {
+  filename: string
+  mime: string
+  data: Buffer
+}
+
+function parseMultipartImage(body: Buffer, contentType: string | undefined): ParsedImage | null {
   const m = /boundary=([^;]+)/i.exec(contentType || '')
   if (!m) return null
   const boundary = m[1].trim().replace(/^"|"$/g, '')
@@ -156,8 +183,8 @@ function parseMultipartImage(body, contentType) {
 }
 
 /** Tebak ekstensi dari magic-byte (bukan dari nama file). */
-function detectImageExt(buf, mime) {
-  const starts = (bytes) => bytes.every((b, i) => buf[i] === b)
+function detectImageExt(buf: Buffer, mime: string): string | null {
+  const starts = (bytes: number[]): boolean => bytes.every((b, i) => buf[i] === b)
   if (starts([0x89, 0x50, 0x4e, 0x47])) return 'png'
   if (starts([0xff, 0xd8, 0xff])) return 'jpg'
   if (starts([0x47, 0x49, 0x46, 0x38])) return 'gif'
@@ -173,10 +200,10 @@ function detectImageExt(buf, mime) {
   return null
 }
 
-function readBody(req) {
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let size = 0
-    const chunks = []
+    const chunks: Buffer[] = []
     req.on('data', (chunk) => {
       size += chunk.length
       if (size > 1_000_000) {
@@ -192,7 +219,7 @@ function readBody(req) {
         return
       }
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
       } catch {
         reject(new Error('Body bukan JSON yang valid.'))
       }
@@ -201,7 +228,14 @@ function readBody(req) {
   })
 }
 
-function validateEntry(body) {
+interface ValidatedEntry {
+  jp: string
+  romaji: string
+  arti: string
+  kategori: string
+}
+
+function validateEntry(body: Record<string, unknown>): { entry?: ValidatedEntry; error?: string } {
   const jp = String(body.jp ?? '').trim()
   const romaji = String(body.romaji ?? '').trim()
   const arti = String(body.arti ?? '').trim()
@@ -212,7 +246,7 @@ function validateEntry(body) {
   return { entry: { jp, romaji, arti, kategori } }
 }
 
-async function handleApi(req, res, url) {
+async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
   // GET/POST /api/vocab
   if (url.pathname === '/api/vocab') {
     if (req.method === 'GET') {
@@ -242,18 +276,21 @@ async function handleApi(req, res, url) {
       const limitRaw = url.searchParams.get('limit')
       const limit = limitRaw === null ? null : Math.max(1, Number.parseInt(limitRaw, 10) || 1)
       const items = limit === null ? list.slice(offset) : list.slice(offset, offset + limit)
+      // `index` sudah dibawa setiap item sejak loadVocab — kirim apa adanya.
       sendJson(res, 200, { total: list.length, offset, items })
       return
     }
     if (req.method === 'POST') {
       const body = await readBody(req)
-      const { entry, error } = validateEntry(body)
+      const { entry, error } = validateEntry(body) as { entry?: ValidatedEntry; error?: string }
       if (error) {
         sendJson(res, 400, { error })
         return
       }
       const list = await loadVocab()
-      const item = { id: nextId(list), ...entry }
+      // Index bisa bergeser bila file JSON diedit manual — dinormalkan ulang.
+      list.forEach((item, i) => { item.index = i })
+      const item: VocabItem = { id: nextId(list), index: list.length, ...entry! }
       list.push(item)
       await saveVocab(list)
       sendJson(res, 201, { item, total: list.length })
@@ -279,7 +316,7 @@ async function handleApi(req, res, url) {
         sendJson(res, 404, { error: `Kosakata dengan id ${id} tidak ditemukan.` })
         return
       }
-      list[index] = { id, ...entry }
+      list[index] = { id, index, ...entry! }
       await saveVocab(list)
       sendJson(res, 200, list[index])
       return
@@ -293,6 +330,8 @@ async function handleApi(req, res, url) {
         return
       }
       const next = list.filter((item) => item.id !== id)
+      // Index pergeser setelah penghapusan — dinormalkan ulang sebelum disimpan.
+      next.forEach((item, i) => { item.index = i })
       await saveVocab(next)
       sendJson(res, 200, { ok: true, total: next.length, index })
       return
@@ -304,18 +343,37 @@ async function handleApi(req, res, url) {
 
 /* ---------- Peta kalimat (GET/PUT /api/map) ---------- */
 
-function clampNum(v, min, max, fallback) {
+function clampNum(v: unknown, min: number, max: number, fallback: number): number {
   const n = Number(v)
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback
 }
 
-function clampStr(v, max) {
+function clampStr(v: unknown, max: number): string {
   return typeof v === 'string' ? v.slice(0, max) : ''
 }
 
-function sanitizeMap(raw) {
-  const nodes = Array.isArray(raw?.nodes)
-    ? raw.nodes.slice(0, 500).map((n) => ({
+interface MapNodeDto {
+  id: string
+  role: string
+  shape: string
+  text: string
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+interface MapEdgeDto {
+  id: string
+  from: string
+  to: string
+  label: string
+}
+
+function sanitizeMap(raw: unknown): { nodes: MapNodeDto[]; edges: MapEdgeDto[] } {
+  const rawObj = raw as { nodes?: unknown; edges?: unknown } | null | undefined
+  const nodes: MapNodeDto[] = Array.isArray(rawObj?.nodes)
+    ? rawObj.nodes.slice(0, 500).map((n: Record<string, unknown>) => ({
         id: clampStr(n.id, 64) || 'n',
         role: clampStr(n.role, 32),
         shape: clampStr(n.shape, 16),
@@ -326,10 +384,10 @@ function sanitizeMap(raw) {
         h: clampNum(n.h, 30, 600, 64),
       }))
     : []
-  const edges = Array.isArray(raw?.edges)
-    ? raw.edges
+  const edges: MapEdgeDto[] = Array.isArray(rawObj?.edges)
+    ? rawObj.edges
         .slice(0, 1000)
-        .map((e) => ({
+        .map((e: Record<string, unknown>) => ({
           id: clampStr(e.id, 64) || 'e',
           from: clampStr(e.from, 64),
           to: clampStr(e.to, 64),
@@ -340,15 +398,15 @@ function sanitizeMap(raw) {
   return { nodes, edges }
 }
 
-async function handleMap(req, res, url) {
+async function handleMap(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname !== '/api/map') return false
 
   if (req.method === 'GET') {
     let raw = EMPTY_MAP
     try {
-      raw = JSON.parse(await fs.readFile(MAP_FILE, 'utf8'))
+      raw = JSON.parse(await fs.readFile(MAP_FILE, 'utf8')) as typeof EMPTY_MAP
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
     }
     sendJson(res, 200, sanitizeMap(raw))
     return true
@@ -375,7 +433,7 @@ async function handleMap(req, res, url) {
  * (on*), dan URL javascript:. Atribut style inline diperbolehkan
  * (dipakai warna/font hasil editor).
  */
-function sanitizeNoteHtml(raw) {
+function sanitizeNoteHtml(raw: unknown): string {
   let html = typeof raw === 'string' ? raw : ''
   html = html.slice(0, NOTE_MAX_BYTES)
   html = html.replace(/<\/?(script|style|iframe|object|embed|link|meta|base|form)\b[^>]*>/gi, '')
@@ -399,18 +457,18 @@ function sanitizeNoteHtml(raw) {
   return html
 }
 
-async function handleNoteImage(req, res, url) {
+async function handleNoteImage(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname !== '/api/note/image') return false
   if (req.method !== 'POST') {
     sendJson(res, 405, { error: 'Metode tidak diizinkan.' })
     return true
   }
-  let file = null
+  let file: ParsedImage | null = null
   try {
     const raw = await readRawBody(req, IMG_MAX_BYTES + 64 * 1024)
     file = parseMultipartImage(raw, req.headers['content-type'])
   } catch (err) {
-    sendJson(res, 413, { error: err.message || 'File terlalu besar.' })
+    sendJson(res, 413, { error: (err as Error).message || 'File terlalu besar.' })
     return true
   }
   if (!file || !file.data.length) {
@@ -433,16 +491,16 @@ async function handleNoteImage(req, res, url) {
   return true
 }
 
-async function handleNote(req, res, url) {
+async function handleNote(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname !== '/api/note') return false
 
   if (req.method === 'GET') {
     let content = ''
     try {
-      const raw = JSON.parse(await fs.readFile(NOTE_FILE, 'utf8'))
+      const raw = JSON.parse(await fs.readFile(NOTE_FILE, 'utf8')) as { content?: unknown }
       content = sanitizeNoteHtml(raw?.content)
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
     }
     sendJson(res, 200, { content })
     return true
@@ -469,7 +527,7 @@ async function handleNote(req, res, url) {
  * kunci API TIDAK PERNAH dikirim ke browser — frontend hanya memanggil
  * proxy POST /api/chat dan GET /api/chat/status.
  */
-let chatClient = null
+let chatClient: OpenAI | null = null
 function getChatClient() {
   if (!CHAT_API_KEY) return null
   if (!chatClient) {
@@ -480,7 +538,7 @@ function getChatClient() {
   }
   return chatClient
 }
-async function handleChat(req, res, url) {
+async function handleChat(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname === '/api/chat/status' && req.method === 'GET') {
     sendJson(res, 200, {
       ai: Boolean(CHAT_API_KEY),
@@ -502,18 +560,18 @@ async function handleChat(req, res, url) {
     })
     return true
   }
-  let history = []
+  let history: Array<{ role?: unknown; content?: unknown }> = []
   try {
     const body = await readBody(req)
-    if (Array.isArray(body?.messages)) history = body.messages
+    if (Array.isArray(body?.messages)) history = body.messages as typeof history
   } catch {
     sendJson(res, 400, { error: 'Body JSON tidak valid.' })
     return true
   }
-  const messages = history
+  const messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }> = history
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant'))
     .slice(-20)
-    .map((m) => ({ role: m.role, content: String(m.content ?? '').slice(0, 4000) }))
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: String(m.content ?? '').slice(0, 4000) }))
   if (messages.length === 0 || !messages.some((m) => m.role === 'user')) {
     sendJson(res, 400, { error: 'Kirim minimal satu pesan user.' })
     return true
@@ -526,7 +584,7 @@ async function handleChat(req, res, url) {
   })
   // Panggil model via SDK OpenAI (baseURL TokenHarbor).
   try {
-    const client = getChatClient()
+    const client = getChatClient()!
     const completion = await client.chat.completions.create(
       {
         model: CHAT_MODEL,
@@ -542,12 +600,13 @@ async function handleChat(req, res, url) {
     sendJson(res, 200, { reply, model: completion.model ?? CHAT_MODEL })
     return true
   } catch (err) {
+    const e = err as { name?: string; code?: string; message?: string }
     const timeout =
-      err?.name === 'AbortError' || err?.code === 'ETIMEDOUT' || /timeout/i.test(err?.message ?? '')
+      e?.name === 'AbortError' || e?.code === 'ETIMEDOUT' || /timeout/i.test(e?.message ?? '')
     sendJson(res, timeout ? 504 : 502, {
       error: timeout
         ? 'Model AI tidak merespons dalam 30 detik. Coba lagi.'
-        : `Gagal menghubungi model AI: ${err.message || err}`,
+        : `Gagal menghubungi model AI: ${(err as Error).message || err}`,
     })
     return true
   }
@@ -555,7 +614,8 @@ async function handleChat(req, res, url) {
 
 /* ---------- Penyajian statis (hasil build) ---------- */
 
-const MIME = {
+/** Peta ekstensi file → Content-Type untuk penyajian statis. */
+const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -571,7 +631,7 @@ const MIME = {
 }
 
 /** Sajikan file gambar hasil upload catatan (GET/HEAD /uploads/<nama>). */
-async function serveUpload(res, url, method) {
+async function serveUpload(res: ServerResponse, url: URL, method: string | undefined): Promise<void> {
   const name = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
   if (!/^[A-Za-z0-9_-]+\.(png|jpg|jpeg|gif|webp)$/i.test(name.slice('uploads/'.length))) {
     sendJson(res, 404, { error: 'File tidak ditemukan.' })
@@ -593,7 +653,7 @@ async function serveUpload(res, url, method) {
   }
 }
 
-async function serveStatic(res, url) {
+async function serveStatic(res: ServerResponse, url: URL): Promise<void> {
   try {
     await fs.access(DIST_DIR)
   } catch {
@@ -634,7 +694,7 @@ async function serveStatic(res, url) {
 
 /* ---------- Server ---------- */
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`)
   try {
     if (url.pathname.startsWith('/api/')) {
@@ -655,7 +715,7 @@ const server = http.createServer(async (req, res) => {
     }
     sendJson(res, 405, { error: 'Metode tidak diizinkan.' })
   } catch (err) {
-    sendJson(res, 500, { error: err.message || 'Kesalahan server.' })
+    sendJson(res, 500, { error: (err as Error).message || 'Kesalahan server.' })
   }
 })
 

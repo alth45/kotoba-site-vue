@@ -10,29 +10,29 @@ const NOTE_API = '/api/note'
 const content = ref('')
 const loading = ref(false)
 const saving = ref(false)
-const saveError = ref(null)
-const lastSavedAt = ref(null)
+const saveError = ref<string | null>(null)
+const lastSavedAt = ref<Date | null>(null)
 
 const AUTOSAVE_MS = 900
-let saveTimer = null
+let saveTimer: number | undefined
 let queuedSave = false
 
-async function loadNote() {
+async function loadNote(): Promise<void> {
   loading.value = true
   saveError.value = null
   try {
     const res = await fetch(NOTE_API)
     if (!res.ok) throw new Error(`Gagal memuat catatan (HTTP ${res.status}).`)
-    const data = await res.json()
+    const data = (await res.json()) as { content?: unknown }
     content.value = typeof data.content === 'string' ? data.content : ''
   } catch (e) {
-    saveError.value = e.message
+    saveError.value = (e as Error).message
   } finally {
     loading.value = false
   }
 }
 
-async function saveNote() {
+async function saveNote(): Promise<void> {
   if (saving.value) {
     queuedSave = true
     return
@@ -48,7 +48,7 @@ async function saveNote() {
     if (!res.ok) throw new Error(`Gagal menyimpan (HTTP ${res.status}).`)
     lastSavedAt.value = new Date()
   } catch (e) {
-    saveError.value = e.message
+    saveError.value = (e as Error).message
   } finally {
     saving.value = false
     if (queuedSave) {
@@ -58,7 +58,7 @@ async function saveNote() {
   }
 }
 
-function scheduleSave() {
+function scheduleSave(): void {
   window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(saveNote, AUTOSAVE_MS)
 }

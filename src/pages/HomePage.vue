@@ -8,7 +8,7 @@ import {
   onTouchStart,
   onTouchEnd,
   hideHint,
-} from '../composables/useNavigation.js'
+} from '../composables/useNavigation.ts'
 import DotsNav from '../components/DotsNav.vue'
 import ScrollHint from '../components/ScrollHint.vue'
 import HeroPanel from '../components/HeroPanel.vue'

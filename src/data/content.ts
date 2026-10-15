@@ -3,7 +3,43 @@
  * Dipisah dari komponen agar mudah dikelola dan diganti.
  */
 
-export const navItems = [
+/** Item menu navigasi: menuju panel (`target`) atau rute halaman (`page`). */
+export interface NavItem {
+  label: string
+  target?: number
+  page?: string
+}
+
+export interface HeroStat {
+  value: string
+  label: string
+}
+
+/** Kartu panel "Dasar" — `paths` berisi element <path> ikon SVG. */
+export interface FeatureCard {
+  title: string
+  text: string
+  color: string
+  paths: string[]
+}
+
+export interface FaqItem {
+  question: string
+  /** Boleh memuat tag sederhana (<strong> dsb.), dirender dengan v-html. */
+  answerHtml: string
+}
+
+export interface FooterLink {
+  label: string
+  target?: number
+}
+
+export interface FooterColumn {
+  title: string
+  links: FooterLink[]
+}
+
+export const navItems: NavItem[] = [
   { label: 'Beranda', target: 0 },
   { label: 'Dasar', target: 1 },
   { label: 'Kosakata', page: '/kosakata' },
@@ -15,7 +51,7 @@ export const navItems = [
   { label: 'Kontak', target: 4 },
 ]
 
-export const heroStats = [
+export const heroStats: HeroStat[] = [
   { value: '8 Kata', label: 'Kosakata dasar' },
   { value: 'N5', label: 'Level pemula' },
   { value: '5 Menit', label: 'Latihan harian' },
@@ -25,7 +61,7 @@ export const heroStats = [
  * Kartu pada panel "Dasar".
  * `paths` berisi isi element <path> dari ikon SVG-nya.
  */
-export const featureCards = [
+export const featureCards: FeatureCard[] = [
   {
     title: 'Kelompokkan per tema',
     text: 'Salam, angka, kata kerja — mengelompokkan kosakata membuat otak lebih cepat mengingatnya.',
@@ -55,7 +91,7 @@ export const featureCards = [
  * Item FAQ. `answerHtml` boleh memuat tag sederhana seperti <strong>.
  * Konten berasal dari file HTML asli, sehingga v-html aman dipakai di sini.
  */
-export const faqItems = [
+export const faqItems: FaqItem[] = [
   {
     question: 'Apakah perlu hafal hiragana dulu?',
     answerHtml:
@@ -86,7 +122,7 @@ export const faqItems = [
 /**
  * Kolom link footer. `target` (bila ada) adalah indeks panel tujuan.
  */
-export const footerColumns = [
+export const footerColumns: FooterColumn[] = [
   {
     title: 'Belajar',
     links: [

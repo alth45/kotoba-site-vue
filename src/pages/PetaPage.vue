@@ -1,7 +1,7 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useMapStore } from '../composables/useMapStore.js'
-import { useConfirm } from '../composables/useConfirm.js'
+import { useMapStore } from '../composables/useMapStore.ts'
+import { useConfirm } from '../composables/useConfirm.ts'
 import MapPalette from '../components/map/MapPalette.vue'
 import MapCanvas from '../components/map/MapCanvas.vue'
 import MapInspector from '../components/map/MapInspector.vue'
@@ -12,17 +12,18 @@ const { confirmDialog } = useConfirm()
 onMounted(loadMap)
 
 /** Pilihan aktif di kanvas: { type: 'node'|'edge', id } atau null. */
-const selected = ref(null)
+type Selection = { type: 'node' | 'edge'; id: string } | null
+const selected = ref<Selection>(null)
 
-function onSelect(type, id) {
-  selected.value = type && id ? { type, id } : null
+function onSelect(type: string | null, id: string | null) {
+  selected.value = type && id ? { type: type as 'node' | 'edge', id } : null
 }
 
 function clearSelection() {
   selected.value = null
 }
 
-const canvasRef = ref(null)
+const canvasRef = ref<InstanceType<typeof MapCanvas> | null>(null)
 
 const statusText = computed(() => {
   if (loading.value) return 'Memuat…'

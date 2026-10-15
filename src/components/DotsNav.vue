@@ -1,5 +1,5 @@
 <script setup>
-import { current, goTo, PANEL_COUNT } from '../composables/useNavigation.js'
+import { current, goTo, PANEL_COUNT } from '../composables/useNavigation.ts'
 
 const dots = Array.from({ length: PANEL_COUNT }, (_, i) => i)
 </script>

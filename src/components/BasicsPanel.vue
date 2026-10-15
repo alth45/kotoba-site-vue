@@ -1,5 +1,5 @@
 <script setup>
-import { featureCards } from '../data/content.js'
+import { featureCards } from '../data/content.ts'
 </script>
 
 <template>
