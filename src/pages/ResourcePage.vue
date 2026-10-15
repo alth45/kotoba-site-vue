@@ -1,155 +1,17 @@
-<script setup>
-import { computed, reactive, ref } from 'vue'
+<script setup lang="ts">
+/**
+ * ResourcePage.vue — halaman daftar sumber belajar.
+ * Data preset, helper murni (domain/favicon/warna), dan seluruh state +
+ * aksi link dipisah ke src/core/resourceLinks.ts & src/core/useResourceLinks.ts.
+ * Script ini hanya memanggil fungsi utamanya dan meneruskan hasilnya ke template.
+ */
+import { CATEGORIES, getDomain, getFavicon, getCategoryColor } from '../core/resourceLinks.ts'
+import { useResourceLinks } from '../core/useResourceLinks.ts'
 
-/* ================================================================
-   PRESET LINKS — situs domain Jepang
-   ================================================================ */
-const PRESETS = [
-  { id: 'p1',  name: 'NHK Web Easy',         url: 'https://www3.nhk.or.jp/news/easy/',            category: 'Berita',     pinned: true  },
-  { id: 'p2',  name: 'Jisho — Kamus Jepang', url: 'https://jisho.org/',                           category: 'Kamus',      pinned: true  },
-  { id: 'p3',  name: 'Takoboto',             url: 'https://takoboto.jp/',                         category: 'Kamus',      pinned: false },
-  { id: 'p4',  name: 'Wanikani',             url: 'https://www.wanikani.com/',                    category: 'Belajar',    pinned: false },
-  { id: 'p5',  name: 'Bunpro',               url: 'https://bunpro.jp/',                           category: 'Belajar',    pinned: false },
-  { id: 'p6',  name: 'JLPT Sensei',          url: 'https://jlptsensei.com/',                      category: 'JLPT',       pinned: false },
-  { id: 'p7',  name: 'JEES — Soal JLPT',     url: 'https://www.jees.or.jp/jlpt/sample.htm',       category: 'JLPT',       pinned: false },
-  { id: 'p8',  name: 'Tofugu',               url: 'https://www.tofugu.com/',                      category: 'Belajar',    pinned: false },
-  { id: 'p9',  name: 'Animelon',             url: 'https://animelon.com/',                        category: 'Hiburan',    pinned: false },
-  { id: 'p10', name: 'Satori Reader',        url: 'https://www.satorireader.com/',                category: 'Baca',       pinned: false },
-  { id: 'p11', name: 'Jpdb.io',              url: 'https://jpdb.io/',                             category: 'Kamus',      pinned: false },
-  { id: 'p12', name: 'NHK Japan',            url: 'https://www.nhk.or.jp/',                       category: 'Berita',     pinned: false },
-  { id: 'p13', name: 'Asahi Shimbun',        url: 'https://www.asahi.com/',                       category: 'Berita',     pinned: false },
-  { id: 'p14', name: 'Yomiuri Online',       url: 'https://www.yomiuri.co.jp/',                   category: 'Berita',     pinned: false },
-  { id: 'p15', name: 'Mainichi Shimbun',     url: 'https://mainichi.jp/',                         category: 'Berita',     pinned: false },
-  { id: 'p16', name: 'Nihongo-Pro',          url: 'https://www.nihongo-pro.com/',                  category: 'Belajar',    pinned: false },
-  { id: 'p17', name: 'JapanesePod101',       url: 'https://www.japanesepod101.com/',              category: 'Belajar',    pinned: false },
-  { id: 'p18', name: 'OJAD — Prosodi',       url: 'https://www.gavo.t.u-tokyo.ac.jp/ojad/',       category: 'Kamus',      pinned: false },
-  { id: 'p19', name: 'Hiragana/Katakana',    url: 'https://www.learn-japanese-adventure.com/',    category: 'Belajar',    pinned: false },
-  { id: 'p20', name: 'Erin\'s Challenge',    url: 'https://www.erin.ne.jp/en/',                   category: 'Hiburan',    pinned: false },
-]
-
-/* ================================================================
-   STORAGE
-   ================================================================ */
-const STORAGE_KEY = 'kotoba-resources'
-
-function loadLinks() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : []
-  } catch {
-    return []
-  }
-}
-
-function saveLinks(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-}
-
-/* ================================================================
-   STATE
-   ================================================================ */
-const userLinks = ref(loadLinks())
-const activeCategory = ref('Semua')
-
-/** Gabungkan preset + user links */
-const allLinks = computed(() => [...PRESETS, ...userLinks.value])
-
-const categories = computed(() => {
-  const cats = new Set(allLinks.value.map((l) => l.category))
-  return ['Semua', ...cats]
-})
-
-const filtered = computed(() => {
-  if (activeCategory.value === 'Semua') return allLinks.value
-  return allLinks.value.filter((l) => l.category === activeCategory.value)
-})
-
-const pinnedLinks = computed(() => filtered.value.filter((l) => l.pinned))
-const normalLinks = computed(() => filtered.value.filter((l) => !l.pinned))
-
-/* ================================================================
-   FORM
-   ================================================================ */
-const form = reactive({ name: '', url: '', category: '' })
-const formError = ref('')
-const justAdded = ref(null)
-
-const CATEGORIES = ['Kamus', 'Belajar', 'Berita', 'JLPT', 'Baca', 'Hiburan', 'Lainnya']
-
-function normalizeUrl(raw) {
-  const s = raw.trim()
-  if (!s) return ''
-  return /^https?:\/\//i.test(s) ? s : 'https://' + s
-}
-
-function getDomain(url) {
-  try { return new URL(url).hostname } catch { return url }
-}
-
-function getFavicon(url) {
-  try {
-    const origin = new URL(url).origin
-    return `https://www.google.com/s2/favicons?domain=${origin}&sz=32`
-  } catch {
-    return null
-  }
-}
-
-function getCategoryColor(cat) {
-  const map = {
-    Kamus:   '#8ba3c7',
-    Belajar: '#8fae9d',
-    Berita:  '#c79a8b',
-    JLPT:    '#c9b478',
-    Baca:    '#a396c0',
-    Hiburan: '#7fa8ae',
-    Lainnya: '#9aa1ab',
-  }
-  return map[cat] ?? '#9aa1ab'
-}
-
-function addLink() {
-  formError.value = ''
-  if (!form.name.trim()) { formError.value = 'Nama tidak boleh kosong.'; return }
-  if (!form.url.trim())  { formError.value = 'URL tidak boleh kosong.'; return }
-
-  const url = normalizeUrl(form.url)
-  try { new URL(url) } catch { formError.value = 'URL tidak valid.'; return }
-
-  const entry = {
-    id: 'u' + Date.now(),
-    name: form.name.trim(),
-    url,
-    category: form.category || 'Lainnya',
-    pinned: false,
-  }
-
-  userLinks.value.push(entry)
-  saveLinks(userLinks.value)
-
-  justAdded.value = entry.id
-  setTimeout(() => { justAdded.value = null }, 1800)
-
-  form.name = ''
-  form.url  = ''
-  form.category = ''
-}
-
-function removeLink(id) {
-  userLinks.value = userLinks.value.filter((l) => l.id !== id)
-  saveLinks(userLinks.value)
-}
-
-function togglePin(link) {
-  // Hanya user links yang bisa di-pin/unpin
-  const idx = userLinks.value.findIndex((l) => l.id === link.id)
-  if (idx !== -1) {
-    userLinks.value[idx].pinned = !userLinks.value[idx].pinned
-    saveLinks(userLinks.value)
-  }
-}
-
-const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
+const {
+  activeCategory, allLinks, categories, filtered, pinnedLinks, normalLinks,
+  form, formError, justAdded, addLink, removeLink, togglePin, isUserLink,
+} = useResourceLinks()
 </script>
 
 <template>
@@ -259,7 +121,7 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
                   alt=""
                   width="16" height="16"
                   loading="lazy"
-                  @error="$event.target.style.display='none'"
+                  @error="($event.target as HTMLElement).style.display='none'"
                 />
                 <span class="card-cat-badge" :style="{ color: getCategoryColor(link.category) }">{{ link.category }}</span>
                 <div class="card-actions" @click.prevent.stop>
@@ -310,7 +172,7 @@ const isUserLink = (id) => userLinks.value.some((l) => l.id === id)
                 alt=""
                 width="16" height="16"
                 loading="lazy"
-                @error="$event.target.style.display='none'"
+                @error="($event.target as HTMLElement).style.display='none'"
               />
               <span class="card-cat-badge" :style="{ color: getCategoryColor(link.category) }">{{ link.category }}</span>
               <div class="card-actions" @click.prevent.stop>
