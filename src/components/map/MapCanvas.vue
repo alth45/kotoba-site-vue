@@ -1,21 +1,26 @@
 <script setup lang="ts">
+// =====================================================================
+// MapCanvas.vue — hanya berisi PERAKITAN fungsi dari src/core/.
+// Seluruh logika (zoom, export, seleksi, drag, geometri) tinggal di core.
+// =====================================================================
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import html2canvas from 'html2canvas'
-import type { MapNode, MapNodeInput } from '../../types.ts'
+import type { MapNode } from '../../types.ts'
+import { CANVAS_W, CANVAS_H, useMapStore, roleById } from '../../composables/useMapStore.ts'
+import { useMapZoom, MIN_ZOOM, MAX_ZOOM } from '../../core/useMapZoom.ts'
+import { useMapExport } from '../../core/useMapExport.ts'
+import { useMapSelection } from '../../core/useMapSelection.ts'
+import { useMapCanvasInteractions } from '../../core/useMapCanvasInteractions.ts'
+import { useMapNodePlacement } from '../../core/useMapNodePlacement.ts'
 import {
-  CANVAS_W,
-  CANVAS_H,
-  useMapStore,
-  roleById,
-  shapeById,
-} from '../../composables/useMapStore.ts'
+  boxRect,
+  buildEdgePaths,
+  labelWidth,
+  nodeStyle,
+  tempEdgePath,
+} from '../../core/mapGeometry.ts'
 
 /** Pilihan aktif di kanvas: { type: 'node'|'edge', id } atau null. */
 type Selection = { type: 'node' | 'edge'; id: string } | null
-/** Garis sementara saat menyambung: { fromId, x, y }. */
-type Connecting = { fromId: string; x: number; y: number } | null
-/** Kotak seleksi (rubber-band) dalam koordinat kanvas. */
-type BoxSel = { startX: number; startY: number; curX: number; curY: number } | null
 
 const props = defineProps<{ selected?: Selection }>()
 const emit = defineEmits<{ select: [type: string | null, id: string | null] }>()
@@ -35,330 +40,80 @@ const {
 
 const workspaceEl = ref<HTMLDivElement | null>(null)
 const canvasEl = ref<HTMLDivElement | null>(null)
-/** Garis sementara saat menyambung: { fromId, x, y }. */
-const connecting = ref<Connecting>(null)
+const connecting = ref<{ fromId: string; x: number; y: number } | null>(null)
+const boxSel = ref<{ startX: number; startY: number; curX: number; curY: number } | null>(null)
 
-/* ================================================================
-   EXPORT PNG
-   ================================================================ */
-const exporting = ref(false)
+/* ---- Zoom & Export PNG (core) ---- */
+const { zoom, zoomIn, zoomOut, zoomReset, onWheelZoom } = useMapZoom()
+const { exporting, exportToPng } = useMapExport(() => canvasEl.value, zoom)
 
-async function exportToPng() {
-  if (exporting.value || !canvasEl.value) return
-  exporting.value = true
+/* ---- Multi-select (core) ---- */
+const { multiSelectedIds, isMultiMode, clearMultiSelect, isMultiSelected } = useMapSelection()
 
-  // Simpan zoom saat ini, lalu reset ke 1 agar hasil export full-resolution
-  const prevZoom = zoom.value
-  zoom.value = 1
-
-  // Tunggu DOM selesai render ulang setelah zoom di-reset
-  await nextTick()
-  // Beri sedikit waktu agar browser menyelesaikan paint
-  await new Promise((r) => setTimeout(r, 80))
-
-  try {
-    const canvas = await html2canvas(canvasEl.value, {
-      backgroundColor: null,   // transparan → ambil dari element
-      scale: 2,                // 2× untuk hasil crisp di layar HiDPI
-      useCORS: true,
-      logging: false,
-      // Paksa ukuran canvas logis (bukan ukuran terscale)
-      width: CANVAS_W,
-      height: CANVAS_H,
-      scrollX: 0,
-      scrollY: 0,
-    })
-
-    // Download
-    const link = document.createElement('a')
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
-    link.download = `peta-kalimat-${timestamp}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
-  } catch (err) {
-    console.error('[export] Gagal mengekspor:', err)
-  } finally {
-    // Kembalikan zoom ke nilai sebelumnya
-    zoom.value = prevZoom
-    exporting.value = false
-  }
-}
-
-/* ================================================================
-   ZOOM
-   ================================================================ */
-const zoom = ref(1)
-const MIN_ZOOM = 0.25
-const MAX_ZOOM = 3
-const ZOOM_STEP = 0.15
-
-function setZoom(val: number) {
-  zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, val))
-}
-function zoomIn() { setZoom(zoom.value + ZOOM_STEP) }
-function zoomOut() { setZoom(zoom.value - ZOOM_STEP) }
-function zoomReset() { setZoom(1) }
-
-function onWheelZoom(e: WheelEvent) {
-  if (!e.ctrlKey && !e.metaKey) return
-  e.preventDefault()
-  const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP
-  setZoom(zoom.value + delta)
-}
-
-/* ================================================================
-   MULTI-SELECT STATE
-   ================================================================ */
-const multiSelectedIds = ref(new Set<string>())
-const isMultiMode = computed(() => multiSelectedIds.value.size > 0)
-
-function clearMultiSelect() {
-  multiSelectedIds.value = new Set()
-}
-
-function isMultiSelected(id: string) {
-  return multiSelectedIds.value.has(id)
-}
-
-/* ================================================================
-   BOX SELECTION (rubber-band)
-   ================================================================ */
-const boxSel = ref<BoxSel>(null)
-
-const boxSelStyle = computed(() => {
-  if (!boxSel.value) return null
-  const { startX, startY, curX, curY } = boxSel.value
-  const x = Math.min(startX, curX)
-  const y = Math.min(startY, curY)
-  const w = Math.abs(curX - startX)
-  const h = Math.abs(curY - startY)
-  return { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` }
+/* ---- Interaksi pointer: blok seleksi, drag, sambung (core) ---- */
+const { startBoxSelect, startMultiDrag, startNodeDrag, startConnect } = useMapCanvasInteractions({
+  canvasEl,
+  zoom,
+  editingId,
+  nodes,
+  boxSel,
+  connecting,
+  updateNode,
+  addEdge,
+  onSelectMany: (ids) => { multiSelectedIds.value = ids },
+  emitSelect: (type, id) => emit('select', type, id),
 })
 
-function startBoxSelect(e: PointerEvent) {
-  if (e.button !== 0) return
-  if (editingId.value) return
+/* ---- Penambahan node dari palet (core) ---- */
+const { addCentered, tryDrop } = useMapNodePlacement({
+  workspaceEl,
+  canvasEl,
+  zoom,
+  editingId,
+  addNode,
+  clearMultiSelect,
+  emitSelect: (type, id) => emit('select', type, id),
+})
+defineExpose({ addCentered, tryDrop })
 
-  const p = canvasPoint(e)
-  boxSel.value = { startX: p.x, startY: p.y, curX: p.x, curY: p.y }
+/* ---- Gaya rubber-band ---- */
+const boxSelStyle = computed(() => {
+  if (!boxSel.value) return null
+  const r = boxRect(boxSel.value.startX, boxSel.value.startY, boxSel.value.curX, boxSel.value.curY)
+  return { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` }
+})
 
-  const onMove = (ev: PointerEvent) => {
-    const pt = canvasPoint(ev)
-    if (boxSel.value) boxSel.value = { ...boxSel.value, curX: pt.x, curY: pt.y }
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-
-    if (boxSel.value) {
-      const { startX, startY, curX, curY } = boxSel.value
-      const rx = Math.min(startX, curX)
-      const ry = Math.min(startY, curY)
-      const rw = Math.abs(curX - startX)
-      const rh = Math.abs(curY - startY)
-
-      if (rw > 6 || rh > 6) {
-        const ids = new Set<string>()
-        for (const n of nodes.value) {
-          if (n.x < rx + rw && n.x + n.w > rx && n.y < ry + rh && n.y + n.h > ry) {
-            ids.add(n.id)
-          }
-        }
-        if (ids.size > 0) {
-          multiSelectedIds.value = ids
-          emit('select', null, null)
-        } else {
-          clearMultiSelect()
-          emit('select', null, null)
-        }
-      } else {
-        clearMultiSelect()
-        emit('select', null, null)
-      }
-    }
-    boxSel.value = null
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-}
-
-/* ================================================================
-   DRAG MULTI-SELECT
-   ================================================================ */
-function startMultiDrag(e: PointerEvent, startNode: MapNode) {
-  if (e.button !== 0) return
-  if (editingId.value === startNode.id) return
-
-  const snapshots = new Map<string, { x: number; y: number }>()
-  for (const id of multiSelectedIds.value) {
-    const n = nodes.value.find((nd) => nd.id === id)
-    if (n) snapshots.set(id, { x: n.x, y: n.y })
-  }
-
-  const startPt = canvasPoint(e)
-
-  const onMove = (ev: PointerEvent) => {
-    const pt = canvasPoint(ev)
-    const dx = Math.round(pt.x - startPt.x)
-    const dy = Math.round(pt.y - startPt.y)
-    for (const [id, snap] of snapshots) {
-      const n = nodes.value.find((nd) => nd.id === id)
-      if (!n) continue
-      updateNode(id, {
-        x: clamp(snap.x + dx, 0, CANVAS_W - n.w),
-        y: clamp(snap.y + dy, 0, CANVAS_H - n.h),
-      })
-    }
-  }
-
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-}
-
-/* ================================================================
-   HELPER
-   ================================================================ */
-function canvasPoint(e: MouseEvent): { x: number; y: number } {
-  if (!canvasEl.value) return { x: 0, y: 0 }
-  const rect = canvasEl.value.getBoundingClientRect()
-  return {
-    x: (e.clientX - rect.left) / zoom.value,
-    y: (e.clientY - rect.top) / zoom.value,
-  }
-}
-
-function clamp(v: number, min: number, max: number) {
-  return Math.min(Math.max(v, min), max)
-}
-
-function nodeById(id: string) {
-  return nodes.value.find((n) => n.id === id)
-}
-
+/* ---- Helper kecil yang tersisa di komponen ---- */
 function roleOf(node: MapNode) {
   return roleById(node.role)
 }
-
-function nodeStyle(node: MapNode) {
-  const shape = shapeById(node.shape)
-  return {
-    left: `${node.x}px`,
-    top: `${node.y}px`,
-    width: `${node.w}px`,
-    height: `${node.h}px`,
-    borderRadius: shape.radius,
-    '--role-color': roleById(node.role).color,
-  }
-}
-
 function isSelected(id: string) {
   return props.selected?.type === 'node' && props.selected.id === id
 }
-
 function isSelectedEdge(id: string) {
   return props.selected?.type === 'edge' && props.selected.id === id
 }
 
-/* ================================================================
-   TAMBAH NODE (dipakai palet)
-   ================================================================ */
-function addCentered(payload: MapNodeInput, autoEdit = false) {
-  const shape = shapeById(payload.shape ?? 'kotak')
-  const w = payload.w ?? shape.w
-  const h = payload.h ?? shape.h
-  const node = addNode({
-    ...payload,
-    x: Math.round((CANVAS_W - w) / 2 + (Math.random() * 60 - 30)),
-    y: Math.round((CANVAS_H - h) / 2 + (Math.random() * 40 - 20)),
-  })
-  clearMultiSelect()
-  emit('select', 'node', node.id)
-  if (autoEdit) editingId.value = node.id
-  return node
-}
-
-function tryDrop(payload: MapNodeInput, clientX: number, clientY: number) {
-  const wsRect = workspaceEl.value?.getBoundingClientRect()
-  const cvRect = canvasEl.value?.getBoundingClientRect()
-  if (!wsRect || !cvRect) return null
-
-  const inside =
-    clientX >= wsRect.left && clientX <= wsRect.right &&
-    clientY >= wsRect.top && clientY <= wsRect.bottom
-  if (!inside) return null
-
-  const shape = shapeById(payload.shape ?? 'kotak')
-  const w = payload.w ?? shape.w
-  const h = payload.h ?? shape.h
-  const x = clamp(Math.round((clientX - cvRect.left) / zoom.value - w / 2), 0, CANVAS_W - w)
-  const y = clamp(Math.round((clientY - cvRect.top) / zoom.value - h / 2), 0, CANVAS_H - h)
-  const node = addNode({ ...payload, x, y })
-  clearMultiSelect()
-  emit('select', 'node', node.id)
-  return node
-}
-
-defineExpose({ addCentered, tryDrop })
-
-/* ================================================================
-   DRAG SINGLE NODE
-   ================================================================ */
-function startNodeDrag(e: PointerEvent, node: MapNode) {
-  if (e.button !== 0) return
-  if (editingId.value === node.id) return
-
-  // Jika node sudah ada di multi-select → lakukan multi-drag
+/* ---- Drag node: bila sudah terblok → multi-drag (core) ---- */
+function onNodePointerDown(e: PointerEvent, node: MapNode) {
   if (isMultiSelected(node.id)) {
-    startMultiDrag(e, node)
+    startMultiDrag(e, node, multiSelectedIds.value)
     return
   }
-
   clearMultiSelect()
   emit('select', 'node', node.id)
-
-  const el = e.currentTarget as HTMLElement
-  const start = canvasPoint(e)
-  const offX = start.x - node.x
-  const offY = start.y - node.y
-
-  const onMove = (ev: PointerEvent) => {
-    const p = canvasPoint(ev)
-    updateNode(node.id, {
-      x: clamp(Math.round(p.x - offX), 0, CANVAS_W - node.w),
-      y: clamp(Math.round(p.y - offY), 0, CANVAS_H - node.h),
-    })
-  }
-  const onUp = () => {
-    el.removeEventListener('pointermove', onMove)
-    el.removeEventListener('pointerup', onUp)
-    el.removeEventListener('pointercancel', onUp)
-  }
-  el.setPointerCapture(e.pointerId)
-  el.addEventListener('pointermove', onMove)
-  el.addEventListener('pointerup', onUp)
-  el.addEventListener('pointercancel', onUp)
+  startNodeDrag(e, node)
 }
 
-/* ================================================================
-   EDIT TEKS
-   ================================================================ */
+/* ---- Edit teks (dbl-click) ---- */
 function beginEdit(node: MapNode) {
   clearMultiSelect()
   emit('select', 'node', node.id)
   editingId.value = node.id
 }
-
 function endEdit() {
   editingId.value = null
 }
-
 watch(editingId, (id) => {
   if (!id) return
   nextTick(() => {
@@ -370,38 +125,12 @@ watch(editingId, (id) => {
   })
 })
 
-/* ================================================================
-   SAMBUNG NODE
-   ================================================================ */
-function startConnect(e: PointerEvent, node: MapNode) {
-  e.preventDefault()
-  const p = canvasPoint(e)
-  connecting.value = { fromId: node.id, x: p.x, y: p.y }
-
-  const onMove = (ev: PointerEvent) => {
-    const pt = canvasPoint(ev)
-    connecting.value = { fromId: node.id, x: pt.x, y: pt.y }
-  }
-  const onUp = (ev: PointerEvent) => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>('.node')
-    if (target?.dataset?.id) addEdge(node.id, target.dataset.id)
-    connecting.value = null
-  }
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-}
-
-/* ================================================================
-   KEYBOARD
-   ================================================================ */
+/* ---- Keyboard: zoom, Escape, Delete (memakai aksi core) ---- */
 function onKeydown(e: KeyboardEvent) {
   const t = e.target as HTMLElement | EventTarget | null
   const tag = (t as HTMLElement | null)?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || (t as HTMLElement | null)?.isContentEditable) return
 
-  // Zoom shortcut
   if (e.key === '+' || e.key === '=') { zoomIn(); return }
   if (e.key === '-' && !e.ctrlKey) { zoomOut(); return }
   if (e.key === '0' && !e.ctrlKey) { zoomReset(); return }
@@ -414,7 +143,6 @@ function onKeydown(e: KeyboardEvent) {
   }
   if (e.key !== 'Delete' && e.key !== 'Backspace') return
 
-  // Hapus semua node yang terblok
   if (isMultiMode.value) {
     e.preventDefault()
     for (const id of [...multiSelectedIds.value]) removeNode(id)
@@ -422,7 +150,6 @@ function onKeydown(e: KeyboardEvent) {
     emit('select', null, null)
     return
   }
-
   if (props.selected?.type === 'node') {
     e.preventDefault()
     removeNode(props.selected.id)
@@ -434,48 +161,13 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-/* ================================================================
-   GEOMETRI GARIS (bezier + titik tengah label)
-   ================================================================ */
-const edgePaths = computed(() => {
-  const out = []
-  for (const e of edges.value) {
-    const a = nodeById(e.from)
-    const b = nodeById(e.to)
-    if (!a || !b) continue
-    const x1 = a.x + a.w / 2
-    const y1 = a.y + a.h / 2
-    const x2 = b.x + b.w / 2
-    const y2 = b.y + b.h / 2
-    const dx = x2 - x1
-    const c = Math.max(60, Math.abs(dx) * 0.4)
-    const c1x = x1 + (dx >= 0 ? c : -c)
-    const c2x = x2 + (dx >= 0 ? -c : c)
-    out.push({
-      ...e,
-      d: `M ${x1} ${y1} C ${c1x} ${y1}, ${c2x} ${y2}, ${x2} ${y2}`,
-      midX: (x1 + 3 * c1x + 3 * c2x + x2) / 8,
-      midY: (y1 + 3 * y1 + 3 * y2 + y2) / 8,
-    })
-  }
-  return out
-})
-
+/* ---- Geometri garis (core) ---- */
+const edgePaths = computed(() => buildEdgePaths(edges.value, nodes.value))
 const tempPath = computed(() => {
   if (!connecting.value) return ''
-  const src = nodeById(connecting.value.fromId)
-  if (!src) return ''
-  const x1 = src.x + src.w / 2
-  const y1 = src.y + src.h / 2
-  const { x, y } = connecting.value
-  const c = Math.max(50, Math.abs(x - x1) * 0.4)
-  const dir = x >= x1 ? 1 : -1
-  return `M ${x1} ${y1} C ${x1 + c * dir} ${y1}, ${x - c * dir} ${y}, ${x} ${y}`
+  const src = nodes.value.find((n) => n.id === connecting.value!.fromId)
+  return tempEdgePath(src, connecting.value.x, connecting.value.y)
 })
-
-function labelWidth(label: string) {
-  return label.length * 11 + 16
-}
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
@@ -603,7 +295,7 @@ onBeforeUnmount(() => {
             }"
             :data-id="node.id"
             :style="nodeStyle(node)"
-            @pointerdown="startNodeDrag($event, node)"
+            @pointerdown="onNodePointerDown($event, node)"
             @dblclick.stop="beginEdit(node)"
           >
             <span class="node-role">{{ roleOf(node).jp }}</span>

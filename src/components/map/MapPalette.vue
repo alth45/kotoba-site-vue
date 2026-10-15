@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import type { MapNodeInput, MapRole, ShapeDef, MapTemplate } from '../../types.ts'
+// =====================================================================
+// MapPalette.vue — logika drag palet didelegasikan ke src/core/useMapPaletteDrag.ts.
+// =====================================================================
+import type { MapNodeInput, MapRole, MapTemplate } from '../../types.ts'
 import {
   ROLES,
   SHAPE_DEFS,
@@ -9,13 +11,9 @@ import {
   useMapStore,
 } from '../../composables/useMapStore.ts'
 import { useConfirm } from '../../composables/useConfirm.ts'
+import { useMapPaletteDrag } from '../../core/useMapPaletteDrag.ts'
+import { normalizeCanvasApi } from '../../core/useMapNodePlacement.ts'
 import type MapCanvas from './MapCanvas.vue'
-
-/** API yang diekspos MapCanvas via defineExpose. */
-type CanvasApi = {
-  addCentered: (payload: MapNodeInput, autoEdit?: boolean) => unknown
-  tryDrop: (payload: MapNodeInput, clientX: number, clientY: number) => unknown
-} | null
 
 const props = defineProps<{
   /** Ref ke MapCanvas (defineExpose: tryDrop, addCentered). */
@@ -25,78 +23,30 @@ const props = defineProps<{
 const { nodes, applyTemplate } = useMapStore()
 const { confirmDialog } = useConfirm()
 
-/* ---------- Drag dari palet ke kanvas ---------- */
-const ghost = ref<{ label: string; x: number; y: number } | null>(null)
-let pressStarted = false
-let startX = 0
-let startY = 0
+/* ---------- Drag dari palet ke kanvas (core) ---------- */
+const canvasApi = () => normalizeCanvasApi(props.canvasRef)
 
-function payloadFor(kind: string, value: string): MapNodeInput {
-  if (kind === 'shape') return { shape: value, role: 'setsumei' }
-  if (kind === 'role') return { role: value, shape: 'kotak' }
-  return { role: 'joshi', shape: 'elips', text: value, w: 110, h: 56 }
+const { ghost, onPaletteDown } = useMapPaletteDrag()
+
+function paletteHandlers() {
+  return {
+    onDrop: (payload: MapNodeInput, x: number, y: number) => canvasApi()?.tryDrop(payload, x, y),
+    onClick: (payload: MapNodeInput) => canvasApi()?.addCentered(payload, true),
+  }
 }
 
-/**
- * canvasRef bisa berupa instance komponen (hasil auto-unwrap template Vue)
- * ATAU ref murni — dinormalisasi dulu supaya tryDrop/addCentered selalu terpanggil.
- */
-function canvasApi(): CanvasApi {
-  const c = props.canvasRef as { value?: CanvasApi } | CanvasApi | null | undefined
-  if (!c) return null
-  if (typeof c === 'object' && 'value' in c) return (c as { value: CanvasApi }).value ?? null
-  return c as CanvasApi
-}
-
-function onPaletteDown(event: PointerEvent, kind: string, value: string, label: string) {
-  if (event.button !== 0) return
-  pressStarted = false
-  startX = event.clientX
-  startY = event.clientY
-
-  const onMove = (ev: PointerEvent) => {
-    if (!pressStarted) {
-      if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return
-      pressStarted = true
-    }
-    ghost.value = { label, x: ev.clientX, y: ev.clientY }
-  }
-
-  const onUp = (ev: PointerEvent) => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-    const started = pressStarted
-    ghost.value = null
-    pressStarted = false
-
-    const payload = payloadFor(kind, value)
-    const api = canvasApi()
-    if (!api) return
-    if (started) {
-      // Dari drag: jatuhkan tepat di kursor (posisi di-clamp ke kanvas).
-      api.tryDrop?.(payload, ev.clientX, ev.clientY)
-    } else {
-      // Klik biasa: tambah di tengah + langsung edit teks.
-      api.addCentered?.(payload, true)
-    }
-  }
-
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+/** Wrapper: teruskan event + info item ke fungsi core dengan handler komponen ini. */
+function onItemDown(event: PointerEvent, kind: string, value: string, label: string) {
+  onPaletteDown(event, kind, value, label, paletteHandlers())
 }
 
 /* ---------- Klik peran / partikel (tanpa drag) ---------- */
 function onRoleClick(role: MapRole) {
-  canvasApi()?.addCentered?.({ role: role.id, shape: 'kotak' }, true)
+  canvasApi()?.addCentered({ role: role.id, shape: 'kotak' }, true)
 }
 
 function onParticleClick(p: string) {
-  canvasApi()?.addCentered?.(
-    { role: 'joshi', shape: 'elips', text: p, w: 110, h: 56 },
-    false,
-  )
+  canvasApi()?.addCentered({ role: 'joshi', shape: 'elips', text: p, w: 110, h: 56 }, false)
 }
 
 /* ---------- Template ---------- */
@@ -126,7 +76,7 @@ async function onTemplate(tpl: MapTemplate) {
           class="pal-shape"
           type="button"
           :title="`Tambah ${s.label} (klik/tarik ke kanvas)`"
-          @pointerdown="onPaletteDown($event, 'shape', s.id, s.label)"
+          @pointerdown="onItemDown($event, 'shape', s.id, s.label)"
         >
           <span class="pal-shape-preview" :style="{ borderRadius: s.radius }"></span>
           <span class="pal-shape-label">{{ s.label }}</span>

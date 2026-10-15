@@ -1,8 +1,12 @@
 <script setup lang="ts">
+// =====================================================================
+// ChatPage.vue — render teks dipindah ke src/core/renderRich.ts.
+// =====================================================================
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatAgent } from '../composables/useChatAgent.ts'
 import type { ChatMode } from '../types.ts'
+import { renderRich } from '../core/renderRich.ts'
 
 const router = useRouter()
 const { messages, typing, mode, aiReady, aiModel, setMode, init, send, clear, suggestionChips } =
@@ -25,18 +29,6 @@ async function onSend(text: string) {
   if (route) {
     setTimeout(() => router.push(route), 700)
   }
-}
-
-/** Render ringan: **tebal**, `kode`, dan baris baru. Aman: teks di-escape dulu. */
-function renderRich(text: string) {
-  const esc = String(text ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return esc
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\n/g, '<br>')
 }
 
 watch([messages, typing], () => scrollBottom(), { deep: true })
