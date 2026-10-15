@@ -319,6 +319,87 @@ watch(openPop, (v) => {
   else document.removeEventListener('pointerdown', onDocPointerDown, true)
 })
 
+/* ---------- Sidebar: render situs Jepang untuk meniru teks ---------- */
+interface SitusJp {
+  id: string
+  name: string
+  url: string
+  category: string
+}
+
+/** Daftar situs yang disediakan (sumber: data ResourcePage). */
+const SITES_JP: SitusJp[] = [
+  { id: 'nhk-easy', name: 'NHK Web Easy', url: 'https://www3.nhk.or.jp/news/easy/', category: 'Berita' },
+  { id: 'jisho', name: 'Jisho Dictionary', url: 'https://jisho.org/', category: 'Kamus' },
+  { id: 'takoboto', name: 'Takoboto', url: 'https://takoboto.jp/', category: 'Kamus' },
+  { id: 'wanikani', name: 'Wanikani', url: 'https://www.wanikani.com/', category: 'Belajar' },
+  { id: 'bunpro', name: 'Bunpro', url: 'https://bunpro.jp/', category: 'Belajar' },
+  { id: 'jlptsensei', name: 'JLPT Sensei', url: 'https://jlptsensei.com/', category: 'JLPT' },
+  { id: 'jees', name: 'JEES — Soal JLPT', url: 'https://www.jees.or.jp/jlpt/sample.htm', category: 'JLPT' },
+  { id: 'tofu', name: 'Tofugu', url: 'https://www.tofugu.com/', category: 'Belajar' },
+  { id: 'animelon', name: 'Animelon', url: 'https://animelon.com/', category: 'Hiburan' },
+  { id: 'satori', name: 'Satori Reader', url: 'https://www.satorireader.com/', category: 'Baca' },
+  { id: 'jpdb', name: 'Jpdb.io', url: 'https://jpdb.io/', category: 'Kamus' },
+  { id: 'nhk-japan', name: 'NHK Japan', url: 'https://www.nhk.or.jp/', category: 'Berita' },
+  { id: 'asahi', name: 'Asahi Shimbun', url: 'https://www.asahi.com/', category: 'Berita' },
+  { id: 'yomiuri', name: 'Yomiuri Online', url: 'https://www.yomiuri.co.jp/', category: 'Berita' },
+  { id: 'mainichi', name: 'Mainichi Shimbun', url: 'https://mainichi.jp/', category: 'Berita' },
+  { id: 'nihongo-pro', name: 'Nihongo-Pro', url: 'https://www.nihongo-pro.com/', category: 'Belajar' },
+  { id: 'pod101', name: 'JapanesePod101', url: 'https://www.japanesepod101.com/', category: 'Belajar' },
+  { id: 'ojad', name: 'OJAD — Prosodi', url: 'https://www.gavo.t.u-tokyo.ac.jp/ojad/', category: 'Kamus' },
+  { id: 'kana', name: 'Hiragana/Katakana', url: 'https://www.learn-japanese-adventure.com/', category: 'Belajar' },
+  { id: 'erin', name: "Erin's Challenge", url: 'https://www.erin.ne.jp/en/', category: 'Hiburan' },
+]
+
+const SIDEBAR_KEY = 'kotoba-note-sidebar'
+const SITE_KEY = 'kotoba-note-site'
+
+const sidebarOpen = ref(false)
+const selectedSiteId = ref<string>('')
+const iframeLoading = ref(false)
+
+/** Ambil URL situs terpilih dari daftar */
+const currentSiteUrl = computed(() => {
+  const site = SITES_JP.find((s) => s.id === selectedSiteId.value)
+  return site?.url ?? ''
+})
+
+const currentSiteName = computed(() => {
+  const site = SITES_JP.find((s) => s.id === selectedSiteId.value)
+  return site?.name ?? ''
+})
+
+/** Toggle sidebar & simpan preferensi ke localStorage */
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value
+  try {
+    localStorage.setItem(SIDEBAR_KEY, String(sidebarOpen.value))
+  } catch { /* abaikan */ }
+}
+
+/** Pilih situs → update iframe loading state */
+function selectSite(id: string) {
+  selectedSiteId.value = id
+  iframeLoading.value = true
+  try {
+    localStorage.setItem(SITE_KEY, id)
+  } catch { /* abaikan */ }
+}
+
+/** Muat preferensi saat mount */
+onMounted(() => {
+  try {
+    const open = localStorage.getItem(SIDEBAR_KEY)
+    if (open !== null) sidebarOpen.value = open === 'true'
+    const site = localStorage.getItem(SITE_KEY)
+    if (site && SITES_JP.some((s) => s.id === site)) {
+      selectedSiteId.value = site
+    } else {
+      selectedSiteId.value = SITES_JP[0].id // default: NHK Web Easy
+    }
+  } catch { /* abaikan */ }
+})
+
 /* ---------- Editor ---------- */
 function onInput() {
   syncContent()
@@ -483,6 +564,20 @@ onBeforeUnmount(() => {
 
       <span class="tb-spacer"></span>
       <span class="tb-count">{{ charCount }} karakter</span>
+
+      <span class="tb-sep" aria-hidden="true"></span>
+
+      <button
+        class="tb-btn tb-text-btn"
+        type="button"
+        :class="{ active: sidebarOpen }"
+        :title="sidebarOpen ? 'Sembunyikan sidebar situs' : 'Tampilkan sidebar situs'"
+        :aria-pressed="sidebarOpen"
+        @mousedown.prevent
+        @click="toggleSidebar"
+      >
+        {{ sidebarOpen ? '📖 Sembunyikan Sidebar' : '📖 Tampilkan Sidebar' }}
+      </button>
     </div>
 
     <!-- Panel gambar terpilih: preset ukuran + slider + hapus -->
@@ -517,28 +612,79 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <div class="note-paper">
-      <div
-        ref="editorEl"
-        class="note-editor"
-        :class="{ 'is-loading': loading }"
-        contenteditable="true"
-        data-placeholder="Mulai mengetik di sini… Blok teks untuk memberi warna atau sorotan."
-        spellcheck="true"
-        role="textbox"
-        aria-multiline="true"
-        aria-label="Isi catatan"
-        @input="onInput"
-        @click="onEditorClick"
-      ></div>
-      <!-- Handle tarik untuk resize gambar terpilih (diposisikan via watcher) -->
-      <span
-        v-if="selectedImg"
-        ref="resizeHandleEl"
-        class="img-resize-handle"
-        title="Tarik untuk mengubah ukuran"
-        @pointerdown="onResizeHandleDown"
-      ></span>
+    <div class="note-body">
+      <div class="note-paper">
+        <div
+          ref="editorEl"
+          class="note-editor"
+          :class="{ 'is-loading': loading }"
+          contenteditable="true"
+          data-placeholder="Mulai mengetik di sini… Blok teks untuk memberi warna atau sorotan."
+          spellcheck="true"
+          role="textbox"
+          aria-multiline="true"
+          aria-label="Isi catatan"
+          @input="onInput"
+          @click="onEditorClick"
+        ></div>
+        <!-- Handle tarik untuk resize gambar terpilih (diposisikan via watcher) -->
+        <span
+          v-if="selectedImg"
+          ref="resizeHandleEl"
+          class="img-resize-handle"
+          title="Tarik untuk mengubah ukuran"
+          @pointerdown="onResizeHandleDown"
+        ></span>
+      </div>
+
+      <!-- ===== Sidebar: render situs Jepang sebagai referensi menulis ===== -->
+      <aside v-if="sidebarOpen" class="note-sidebar" aria-label="Sidebar referensi situs">
+        <div class="ns-head">
+          <span class="ns-title">📖 Referensi Situs</span>
+          <button class="ns-close" type="button" title="Tutup sidebar" @click="toggleSidebar">✕</button>
+        </div>
+
+        <div class="ns-controls">
+          <select
+            class="ns-select tb-select"
+            :value="selectedSiteId"
+            title="Pilih situs yang ingin dirender"
+            @change="selectSite(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="s in SITES_JP" :key="s.id" :value="s.id">
+              {{ s.name }} — {{ s.category }}
+            </option>
+          </select>
+          <a
+            v-if="currentSiteUrl"
+            class="ns-open"
+            :href="currentSiteUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Buka di tab baru bila diblokir situs"
+          >↗ Buka Tab</a>
+        </div>
+
+        <div class="ns-frame-wrap">
+          <div v-if="iframeLoading" class="ns-loading">Memuat {{ currentSiteName }}…</div>
+          <iframe
+            v-if="currentSiteUrl"
+            key="site-iframe"
+            class="ns-iframe"
+            :src="currentSiteUrl"
+            :title="`Render ${currentSiteName}`"
+            referrerpolicy="no-referrer"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            loading="lazy"
+            @load="iframeLoading = false"
+          ></iframe>
+        </div>
+
+        <p class="ns-hint">
+          💡 Tiru teks dari situs ini ke canvas catatan. Bila halaman tidak muncul,
+          situs memblokir embed — gunakan tombol “Buka Tab”.
+        </p>
+      </aside>
     </div>
   </main>
 </template>
@@ -670,7 +816,12 @@ onBeforeUnmount(() => {
 .tb-swatch.active{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent-2)}
 
 /* ---------- Kertas editor ---------- */
+.note-body{
+  display:flex;align-items:stretch;gap:14px;
+  width:100%;flex:1 1 auto;min-height:0;
+}
 .note-paper{
+  flex:1 1 auto;min-width:0;
   width:100%;max-width:860px;
   margin:0 auto;
   border:1px solid var(--border);
@@ -765,5 +916,64 @@ onBeforeUnmount(() => {
   .tb-select{max-width:150px}
   .tb-swatches{grid-template-columns:repeat(6,1fr)}
   .note-paper{padding:18px 16px}
+}
+
+/* ---------- Sidebar referensi situs ---------- */
+.note-sidebar{
+  flex:0 0 clamp(320px, 34vw, 520px);
+  display:flex;flex-direction:column;gap:10px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow);
+  padding:12px;
+  min-height:min(62vh,640px);
+  max-height:min(84vh,900px);
+  position:sticky;top:0;
+  align-self:flex-start;
+}
+.ns-head{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+}
+.ns-title{
+  font-weight:700;font-size:14px;color:var(--text);letter-spacing:.02em;
+}
+.ns-close{
+  border:none;background:transparent;color:var(--muted,#828892);
+  font-size:14px;cursor:pointer;padding:4px 8px;border-radius:8px;line-height:1;
+}
+.ns-close:hover{background:rgba(128,136,146,.12);color:var(--text)}
+.ns-controls{
+  display:flex;align-items:center;gap:8px;
+}
+.ns-select{flex:1 1 auto;min-width:0}
+.ns-open{
+  flex:0 0 auto;font-size:12px;font-weight:600;text-decoration:none;
+  color:var(--accent-2,#2980b9);border:1px solid var(--border);
+  padding:6px 10px;border-radius:8px;white-space:nowrap;
+}
+.ns-open:hover{border-color:var(--accent-2,#2980b9)}
+.ns-frame-wrap{
+  position:relative;flex:1 1 auto;min-height:260px;
+  border:1px solid var(--border);border-radius:10px;overflow:hidden;
+  background:#fff;
+}
+.ns-iframe{
+  position:absolute;inset:0;width:100%;height:100%;border:0;display:block;
+}
+.ns-loading{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:13px;color:var(--muted,#828892);background:var(--surface);z-index:1;
+}
+.ns-hint{
+  margin:0;font-size:11.5px;line-height:1.5;color:var(--muted,#828892);
+}
+.tb-btn.active{
+  border-color:var(--accent-2,#2980b9);color:var(--accent-2,#2980b9);
+  background:rgba(41,128,185,.08);
+}
+@media (max-width: 900px){
+  .note-body{flex-direction:column}
+  .note-sidebar{flex:0 0 auto;width:100%;max-height:60vh;position:static}
 }
 </style>
