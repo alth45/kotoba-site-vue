@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useNoteStore } from '../composables/useNoteStore.ts'
+import { useChatAgent } from '../composables/useChatAgent.ts'
+import type { ChatMode } from '../types.ts'
 
 const { content, loading, saving, saveError, lastSavedAt, loadNote, scheduleSave } =
   useNoteStore()
@@ -400,6 +402,162 @@ onMounted(() => {
   } catch { /* abaikan */ }
 })
 
+/* ============================================================
+ * Chat cepat — UI mengambang (FAB geser + kotak chat).
+ * Logika menjawab TIDAK diduplikasi di sini: semuanya memakai
+ * useChatAgent (composable yang sama dengan halaman /chat),
+ * sehingga riwayat & mode (lokal/AI) tetap tersinkron.
+ * ============================================================ */
+const {
+  messages: chatMsgs,
+  typing: chatTyping,
+  mode: chatMode,
+  aiReady,
+  setMode: chatSetMode,
+  init: chatInit,
+  send: chatSend,
+} = useChatAgent()
+
+function onChatModeChange(e: Event) {
+  const v = (e.target as HTMLSelectElement).value
+  if (v === 'ai' || v === 'local') chatSetMode(v as ChatMode)
+}
+
+const CHAT_UI_KEY = 'kotoba-note-chat-ui'
+const chatOpen = ref(false)
+const chatDraft = ref('')
+const chatBoxEl = ref<HTMLDivElement | null>(null)
+
+/** Render ringan **tebal**, `kode`, baris baru — sama seperti ChatPage (teks di-escape dulu). */
+function renderRich(text: string): string {
+  const esc = String(text ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return esc
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\n/g, '<br>')
+}
+
+function chatScrollBottom(smooth = true): void {
+  nextTick(() => {
+    chatBoxEl.value?.scrollTo({ top: chatBoxEl.value.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+  })
+}
+
+async function onChatSend(text: string): Promise<void> {
+  const t = text.trim()
+  if (!t || chatTyping.value) return
+  chatDraft.value = ''
+  await chatSend(t) // navigasi ('/…') sengaja diabaikan — tetap menulis di Catatan
+  chatScrollBottom()
+}
+
+watch([chatMsgs, chatTyping], () => { if (chatOpen.value) chatScrollBottom() }, { deep: true })
+
+function toggleChat(): void {
+  chatOpen.value = !chatOpen.value
+  persistChatUi()
+  if (chatOpen.value) {
+    chatInit()
+    chatScrollBottom(false)
+  }
+}
+
+/* ---- Tombol chat yang bisa digeser ke sembarang tempat ---- */
+interface FabPos { x: number; y: number }
+const fabPos = ref<FabPos | null>(null) // null → posisi default (kanan-bawah)
+const fabDragging = ref(false)
+const fabEl = ref<HTMLButtonElement | null>(null)
+let dragMoved = false
+let dragOffX = 0
+let dragOffY = 0
+
+function clampFab(p: FabPos): FabPos {
+  const el = fabEl.value
+  const w = el?.offsetWidth ?? 64
+  const h = el?.offsetHeight ?? 64
+  const maxX = Math.max(8, window.innerWidth - w - 8)
+  const maxY = Math.max(8, window.innerHeight - h - 8)
+  return { x: Math.min(Math.max(8, p.x), maxX), y: Math.min(Math.max(8, p.y), maxY) }
+}
+
+function persistChatUi(): void {
+  try {
+    localStorage.setItem(CHAT_UI_KEY, JSON.stringify({ open: chatOpen.value, pos: fabPos.value }))
+  } catch { /* abaikan */ }
+}
+
+function onFabPointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  const el = fabEl.value
+  if (!el) return
+  const rect = el.getBoundingClientRect()
+  dragOffX = e.clientX - rect.left
+  dragOffY = e.clientY - rect.top
+  dragMoved = false
+  fabDragging.value = true
+  el.setPointerCapture(e.pointerId)
+  e.preventDefault()
+}
+
+function onFabPointerMove(e: PointerEvent) {
+  if (!fabDragging.value) return
+  const next = clampFab({ x: e.clientX - dragOffX, y: e.clientY - dragOffY })
+  // Anggap "geseran" bila bergerak > 5px dari titik awal klik
+  const cur = fabPos.value
+  if (cur && (Math.abs(cur.x - (e.clientX - dragOffX)) > 5 || Math.abs(cur.y - (e.clientY - dragOffY)) > 5)) {
+    dragMoved = true
+  } else if (!cur) {
+    dragMoved = true
+  }
+  fabPos.value = next
+}
+
+function onFabPointerUp(e: PointerEvent) {
+  const el = fabEl.value
+  if (!fabDragging.value) return
+  fabDragging.value = false
+  if (el && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+  persistChatUi()
+  // Klik (bukan geser) → buka/tutup kotak chat
+  if (!dragMoved) toggleChat()
+}
+
+function resetFabPos(): void {
+  fabPos.value = null
+  persistChatUi()
+}
+
+function onWinResize() {
+  if (fabPos.value) fabPos.value = clampFab(fabPos.value)
+}
+
+/** Muat preferensi posisi & status tombol chat */
+onMounted(() => {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(CHAT_UI_KEY) || 'null')
+    if (raw && typeof raw === 'object') {
+      const o = raw as { open?: unknown; pos?: unknown }
+      if (o.pos && typeof o.pos === 'object') {
+        const p = o.pos as { x?: unknown; y?: unknown }
+        if (typeof p.x === 'number' && typeof p.y === 'number') fabPos.value = { x: p.x, y: p.y }
+      }
+      if (o.open === true) {
+        chatOpen.value = true
+        chatInit()
+        nextTick(() => chatScrollBottom(false))
+      }
+    }
+  } catch { /* abaikan */ }
+  window.addEventListener('resize', onWinResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWinResize)
+})
+
 /* ---------- Editor ---------- */
 function onInput() {
   syncContent()
@@ -686,6 +844,88 @@ onBeforeUnmount(() => {
         </p>
       </aside>
     </div>
+
+    <!-- ===== Chat cepat: tombol mengambang yang bisa digeser ===== -->
+    <button
+      ref="fabEl"
+      class="chat-fab"
+      :class="{ 'is-dragging': fabDragging, 'is-open': chatOpen }"
+      type="button"
+      :style="fabPos ? { left: fabPos.x + 'px', top: fabPos.y + 'px', right: 'auto', bottom: 'auto' } : undefined"
+      title="Klik: buka/tutup chat cepat · Geser: pindahkan tombol"
+      :aria-pressed="chatOpen"
+      aria-label="Chat cepat kosakata"
+      @pointerdown="onFabPointerDown"
+      @pointermove="onFabPointerMove"
+      @pointerup="onFabPointerUp"
+      @pointercancel="onFabPointerUp"
+      @contextmenu.prevent="resetFabPos"
+    >
+      <span class="chat-fab-icon" aria-hidden="true">{{ chatOpen ? '✕' : '💬' }}</span>
+      <span v-if="!chatOpen" class="chat-fab-badge" aria-hidden="true">問</span>
+    </button>
+
+    <!-- Kotak chat — logika 100% memakai useChatAgent (sama dgn halaman /chat) -->
+    <section v-if="chatOpen" class="chat-pop" aria-label="Chat cepat kosakata" aria-live="polite">
+      <header class="cp-head">
+        <span class="cp-title">💬 Tanya kosakata cepat</span>
+        <label class="cp-mode" title="Sumber jawaban Koto">
+          <select
+            class="cp-mode-select"
+            :value="chatMode"
+            :disabled="chatTyping"
+            @change="onChatModeChange"
+          >
+            <option value="local">Lokal</option>
+            <option value="ai" :disabled="!aiReady">AI{{ aiReady ? '' : ' (belum aktif)' }}</option>
+          </select>
+        </label>
+        <button class="cp-close" type="button" title="Tutup chat" @click="toggleChat">✕</button>
+      </header>
+
+      <div ref="chatBoxEl" class="cp-box">
+        <div
+          v-for="m in chatMsgs"
+          :key="m.id"
+          class="cp-msg"
+          :class="m.role === 'user' ? 'is-user' : 'is-agent'"
+        >
+          <span v-if="m.role === 'agent'" class="cp-avatar" aria-hidden="true">言</span>
+          <div class="cp-bubble">
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <p class="cp-bubble-text" v-html="renderRich(m.text)"></p>
+            <ul v-if="m.results?.length" class="cp-results">
+              <li v-for="r in m.results" :key="r.id">
+                <strong>{{ r.jp }}</strong>
+                <em>{{ r.romaji }}</em>
+                <span>{{ r.arti }}</span>
+              </li>
+            </ul>
+            <span class="cp-time">{{ m.time }}</span>
+          </div>
+        </div>
+        <div v-if="chatTyping" class="cp-msg is-agent">
+          <span class="cp-avatar" aria-hidden="true">言</span>
+          <div class="cp-bubble is-typing" aria-label="Koto sedang mengetik">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+      </div>
+
+      <form class="cp-input" @submit.prevent="onChatSend(chatDraft)">
+        <input
+          v-model="chatDraft"
+          type="text"
+          placeholder="mis. apa arti arigatou?"
+          aria-label="Tulis pesan ke Koto"
+          maxlength="300"
+          autocomplete="off"
+        />
+        <button class="cp-send" type="submit" :disabled="!chatDraft.trim() || chatTyping">
+          {{ chatTyping ? '…' : 'Kirim' }}
+        </button>
+      </form>
+    </section>
   </main>
 </template>
 
@@ -975,5 +1215,154 @@ onBeforeUnmount(() => {
 @media (max-width: 900px){
   .note-body{flex-direction:column}
   .note-sidebar{flex:0 0 auto;width:100%;max-height:60vh;position:static}
+}
+
+/* ---------- Chat cepat: tombol mengambang yang bisa digeser ---------- */
+.chat-fab{
+  position:fixed;z-index:60;
+  right:28px;bottom:28px;
+  width:58px;height:58px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--border-strong);
+  background:var(--glass);
+  backdrop-filter:blur(14px) saturate(140%);
+  -webkit-backdrop-filter:blur(14px) saturate(140%);
+  box-shadow:var(--shadow);
+  color:var(--text);
+  font-size:22px;line-height:1;
+  cursor:grab;touch-action:none;user-select:none;
+  transition:border-color .25s ease,transform .25s var(--ease),background-color .3s ease;
+}
+.chat-fab:hover{border-color:var(--accent-2,#2980b9);transform:scale(1.06)}
+.chat-fab.is-dragging{cursor:grabbing;transition:none;transform:scale(1.08);opacity:.92}
+.chat-fab.is-open{
+  background:rgba(41,128,185,.14);
+  border-color:var(--accent-2,#2980b9);
+}
+.chat-fab-icon{pointer-events:none;display:block}
+.chat-fab-badge{
+  position:absolute;top:-4px;right:-4px;
+  width:22px;height:22px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--accent-2,#2980b9);color:#fff;
+  font-size:11px;font-weight:700;
+  border:2px solid var(--surface);
+  pointer-events:none;
+}
+
+/* Kotak chat mengambang */
+.chat-pop{
+  position:fixed;z-index:59;
+  right:28px;bottom:100px;
+  width:min(360px,calc(100vw - 40px));
+  max-height:min(560px,calc(100vh - 150px));
+  display:flex;flex-direction:column;gap:0;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:16px;
+  box-shadow:var(--shadow);
+  overflow:hidden;
+  animation:cp-in .22s var(--ease);
+}
+@keyframes cp-in{
+  from{opacity:0;transform:translateY(10px) scale(.98)}
+  to{opacity:1;transform:translateY(0) scale(1)}
+}
+.cp-head{
+  display:flex;align-items:center;gap:8px;
+  padding:10px 12px;
+  border-bottom:1px solid var(--border);
+  background:var(--glass);
+}
+.cp-title{font-size:.8rem;font-weight:700;color:var(--text);flex:1;letter-spacing:.01em}
+.cp-mode-select{
+  border:1px solid var(--border);
+  background:var(--surface-2);
+  color:var(--text);
+  border-radius:8px;
+  font:inherit;font-size:.72rem;
+  padding:4px 6px;cursor:pointer;
+}
+.cp-close{
+  border:none;background:transparent;color:var(--muted);
+  font-size:13px;cursor:pointer;padding:4px 8px;border-radius:8px;line-height:1;
+}
+.cp-close:hover{background:rgba(128,136,146,.12);color:var(--text)}
+
+.cp-box{
+  flex:1 1 auto;min-height:160px;
+  overflow-y:auto;
+  padding:12px;
+  display:flex;flex-direction:column;gap:10px;
+  scrollbar-width:thin;
+}
+.cp-msg{display:flex;gap:8px;align-items:flex-end}
+.cp-msg.is-user{flex-direction:row-reverse}
+.cp-avatar{
+  flex:0 0 auto;width:24px;height:24px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--accent-2,#2980b9);color:#fff;font-size:11px;font-weight:700;
+}
+.cp-bubble{
+  max-width:82%;
+  border:1px solid var(--border);
+  background:var(--surface-2);
+  border-radius:12px;
+  padding:8px 11px;
+}
+.cp-msg.is-user .cp-bubble{background:rgba(41,128,185,.12);border-color:rgba(41,128,185,.35)}
+.cp-bubble-text{margin:0;font-size:.78rem;line-height:1.55;color:var(--text);word-break:break-word}
+.cp-bubble-text code{
+  font-size:.72rem;background:var(--surface);border:1px solid var(--border);
+  border-radius:5px;padding:0 4px;
+}
+.cp-results{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.cp-results li{
+  display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;
+  font-size:.74rem;color:var(--text);
+  border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:var(--surface);
+}
+.cp-results em{color:var(--muted);font-style:normal;font-size:.68rem}
+.cp-time{display:block;margin-top:4px;font-size:.6rem;color:var(--muted);text-align:right}
+.cp-bubble.is-typing{display:flex;gap:5px;padding:12px}
+.cp-bubble.is-typing span{
+  width:7px;height:7px;border-radius:50%;background:var(--muted);
+  animation:cp-dot 1s ease infinite;
+}
+.cp-bubble.is-typing span:nth-child(2){animation-delay:.15s}
+.cp-bubble.is-typing span:nth-child(3){animation-delay:.3s}
+@keyframes cp-dot{0%,100%{opacity:.3;transform:translateY(0)}50%{opacity:1;transform:translateY(-3px)}}
+
+.cp-input{
+  display:flex;gap:8px;padding:10px 12px;
+  border-top:1px solid var(--border);
+  background:var(--glass);
+}
+.cp-input input{
+  flex:1;min-width:0;
+  border:1px solid var(--border);
+  background:var(--surface-2);
+  color:var(--text);
+  border-radius:10px;
+  padding:8px 12px;
+  font:inherit;font-size:.8rem;
+}
+.cp-input input:focus{outline:none;border-color:var(--accent-2,#2980b9)}
+.cp-send{
+  border:1px solid var(--accent-2,#2980b9);
+  background:rgba(41,128,185,.14);
+  color:var(--text);
+  border-radius:10px;
+  padding:8px 14px;
+  font-size:.78rem;font-weight:600;
+  cursor:pointer;white-space:nowrap;
+  transition:filter .25s ease;
+}
+.cp-send:hover:not(:disabled){filter:brightness(1.1)}
+.cp-send:disabled{opacity:.5;cursor:wait}
+
+@media (max-width: 900px){
+  .chat-pop{right:12px;left:12px;width:auto;bottom:92px}
+  .chat-fab{right:16px;bottom:16px}
 }
 </style>
