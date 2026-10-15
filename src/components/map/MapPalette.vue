@@ -1,0 +1,270 @@
+<script setup>
+import { ref } from 'vue'
+import {
+  ROLES,
+  SHAPE_DEFS,
+  PARTICLES,
+  TEMPLATES,
+  useMapStore,
+} from '../../composables/useMapStore.js'
+import { useConfirm } from '../../composables/useConfirm.js'
+
+const props = defineProps({
+  /** Ref ke MapCanvas (defineExpose: tryDrop, addCentered). */
+  canvasRef: { type: Object, default: null },
+})
+
+const { nodes, applyTemplate } = useMapStore()
+const { confirmDialog } = useConfirm()
+
+/* ---------- Drag dari palet ke kanvas ---------- */
+const ghost = ref(null) // { label, x, y }
+let pressStarted = false
+let startX = 0
+let startY = 0
+
+function payloadFor(kind, value) {
+  if (kind === 'shape') return { shape: value, role: 'setsumei' }
+  if (kind === 'role') return { role: value, shape: 'kotak' }
+  return { role: 'joshi', shape: 'elips', text: value, w: 110, h: 56 }
+}
+
+/**
+ * canvasRef bisa berupa instance komponen (hasil auto-unwrap template Vue)
+ * ATAU ref murni — dinormalisasi dulu supaya tryDrop/addCentered selalu terpanggil.
+ */
+function canvasApi() {
+  const c = props.canvasRef
+  if (!c) return null
+  if (typeof c === 'object' && 'value' in c) return c.value
+  return c
+}
+
+function onPaletteDown(event, kind, value, label) {
+  if (event.button !== 0) return
+  pressStarted = false
+  startX = event.clientX
+  startY = event.clientY
+
+  const onMove = (ev) => {
+    if (!pressStarted) {
+      if (Math.abs(ev.clientX - startX) < 5 && Math.abs(ev.clientY - startY) < 5) return
+      pressStarted = true
+    }
+    ghost.value = { label, x: ev.clientX, y: ev.clientY }
+  }
+
+  const onUp = (ev) => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
+    const started = pressStarted
+    ghost.value = null
+    pressStarted = false
+
+    const payload = payloadFor(kind, value)
+    const api = canvasApi()
+    if (!api) return
+    if (started) {
+      // Dari drag: jatuhkan tepat di kursor (posisi di-clamp ke kanvas).
+      api.tryDrop?.(payload, ev.clientX, ev.clientY)
+    } else {
+      // Klik biasa: tambah di tengah + langsung edit teks.
+      api.addCentered?.(payload, true)
+    }
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
+}
+
+/* ---------- Klik peran / partikel (tanpa drag) ---------- */
+function onRoleClick(role) {
+  canvasApi()?.addCentered?.({ role: role.id, shape: 'kotak' }, true)
+}
+
+function onParticleClick(p) {
+  canvasApi()?.addCentered?.(
+    { role: 'joshi', shape: 'elips', text: p, w: 110, h: 56 },
+    false,
+  )
+}
+
+/* ---------- Template ---------- */
+async function onTemplate(tpl) {
+  if (nodes.value.length > 0) {
+    const ok = await confirmDialog({
+      title: 'Ganti isi kanvas?',
+      message: `Template "${tpl.label}" (${tpl.sample}) akan mengganti seluruh isi peta saat ini.`,
+      confirmText: 'Terapkan',
+      cancelText: 'Batal',
+      danger: false,
+    })
+    if (!ok) return
+  }
+  applyTemplate(tpl)
+}
+</script>
+
+<template>
+  <aside class="map-palette">
+    <section class="pal-sec">
+      <h4>Bentuk</h4>
+      <div class="pal-shapes">
+        <button
+          v-for="s in SHAPE_DEFS"
+          :key="s.id"
+          class="pal-shape"
+          type="button"
+          :title="`Tambah ${s.label} (klik/tarik ke kanvas)`"
+          @pointerdown="onPaletteDown($event, 'shape', s.id, s.label)"
+        >
+          <span class="pal-shape-preview" :style="{ borderRadius: s.radius }"></span>
+          <span class="pal-shape-label">{{ s.label }}</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="pal-sec">
+      <h4>Peran tata bahasa</h4>
+      <ul class="pal-roles">
+        <li v-for="r in ROLES" :key="r.id">
+          <button class="pal-role" type="button" :title="`Tambah ${r.idn}`" @click="onRoleClick(r)">
+            <span class="pal-role-dot" :style="{ background: r.color }"></span>
+            <b>{{ r.jp }}</b>
+            <span class="pal-role-idn">{{ r.idn }}</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <section class="pal-sec">
+      <h4>Partikel cepat</h4>
+      <div class="pal-particles">
+        <button
+          v-for="p in PARTICLES"
+          :key="p"
+          class="pal-particle"
+          type="button"
+          :title="`Tambah partikel ${p}`"
+          @click="onParticleClick(p)"
+        >{{ p }}</button>
+      </div>
+    </section>
+
+    <section class="pal-sec">
+      <h4>Pola cepat</h4>
+      <ul class="pal-templates">
+        <li v-for="tpl in TEMPLATES" :key="tpl.id">
+          <button class="pal-template" type="button" @click="onTemplate(tpl)">
+            <b>{{ tpl.label }}</b>
+            <span>{{ tpl.sample }}</span>
+          </button>
+        </li>
+      </ul>
+    </section>
+
+    <div v-if="ghost" class="pal-ghost" :style="{ left: `${ghost.x}px`, top: `${ghost.y}px` }">
+      {{ ghost.label }}
+    </div>
+  </aside>
+</template>
+
+<style scoped>
+.map-palette{
+  display:flex;flex-direction:column;gap:18px;
+  border:1px solid var(--border);
+  background:var(--surface);
+  border-radius:var(--radius);
+  padding:16px 14px;
+  overflow-y:auto;
+  scrollbar-width:none;
+  transition:background-color .5s ease,border-color .5s ease;
+}
+.map-palette::-webkit-scrollbar{display:none}
+
+.pal-sec h4{
+  margin:0 0 10px;
+  font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);font-weight:500;
+}
+
+/* Bentuk */
+.pal-shapes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pal-shape{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 6px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  color:var(--muted);
+  cursor:grab;
+  transition:border-color .3s ease,transform .3s var(--ease),color .3s ease;
+}
+.pal-shape:hover{border-color:var(--border-strong);color:var(--text);transform:translateY(-2px)}
+.pal-shape-preview{
+  width:34px;height:18px;
+  border:1.5px solid currentColor;
+}
+.pal-shape-label{font-size:.7rem}
+
+/* Peran */
+.pal-roles{display:flex;flex-direction:column;gap:5px}
+.pal-role{
+  display:flex;align-items:center;gap:8px;width:100%;
+  padding:7px 9px;
+  border:1px solid transparent;
+  border-radius:10px;
+  color:var(--muted);
+  font-size:.78rem;
+  text-align:left;
+  transition:background-color .3s ease,border-color .3s ease,color .3s ease;
+}
+.pal-role:hover{background:var(--surface-2);border-color:var(--border);color:var(--text)}
+.pal-role b{font-weight:600;color:var(--text)}
+.pal-role-dot{width:9px;height:9px;border-radius:3px;flex:none}
+.pal-role-idn{font-size:.68rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Partikel */
+.pal-particles{display:flex;flex-wrap:wrap;gap:6px}
+.pal-particle{
+  min-width:34px;padding:5px 9px;
+  border:1px solid var(--border);
+  border-radius:999px;
+  background:var(--surface-2);
+  color:var(--text);
+  font-size:.86rem;
+  cursor:grab;
+  transition:border-color .3s ease,transform .3s var(--ease);
+}
+.pal-particle:hover{border-color:var(--accent-2);transform:translateY(-2px)}
+
+/* Template */
+.pal-templates{display:flex;flex-direction:column;gap:6px}
+.pal-template{
+  display:flex;flex-direction:column;gap:1px;width:100%;
+  padding:8px 10px;
+  border:1px dashed var(--border-strong);
+  border-radius:10px;
+  color:var(--muted);
+  text-align:left;
+  transition:border-color .3s ease,background-color .3s ease;
+}
+.pal-template:hover{border-color:var(--accent-2);background:var(--surface-2)}
+.pal-template b{font-size:.78rem;color:var(--text);font-weight:600}
+.pal-template span{font-size:.72rem}
+
+/* Ghost drag */
+.pal-ghost{
+  position:fixed;z-index:300;
+  transform:translate(-50%,-50%);
+  padding:8px 16px;
+  border:1px solid var(--accent-2);
+  background:var(--surface);
+  color:var(--text);
+  border-radius:12px;
+  box-shadow:var(--shadow);
+  font-size:.85rem;
+  pointer-events:none;
+}
+</style>

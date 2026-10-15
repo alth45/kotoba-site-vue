@@ -1,0 +1,22 @@
+{
+  "name": "kotoba-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "openai": "^6.15.0",
+    "vue": "^3.5.43",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.10",
+    "vite": "^7.3.7"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "nodes": [
+    {
+      "id": "nmv7l02jw1",
+      "role": "shushoku",
+      "shape": "kotak",
+      "text": "高い",
+      "x": 330,
+      "y": 380,
+      "w": 150,
+      "h": 64
+    },
+    {
+      "id": "nmv7l02jw2",
+      "role": "shugo",
+      "shape": "kotak",
+      "text": "山",
+      "x": 530,
+      "y": 380,
+      "w": 150,
+      "h": 64
+    },
+    {
+      "id": "nmv7l02jw3",
+      "role": "joshi",
+      "shape": "elips",
+      "text": "に",
+      "x": 705,
+      "y": 384,
+      "w": 110,
+      "h": 56
+    },
+    {
+      "id": "nmv7l02jw4",
+      "role": "jutsugo",
+      "shape": "membulat",
+      "text": "登る",
+      "x": 840,
+      "y": 380,
+      "w": 150,
+      "h": 64
+    }
+  ],
+  "edges": [
+    {
+      "id": "emv7l02jw5",
+      "from": "nmv7l02jw1",
+      "to": "nmv7l02jw2",
+      "label": "連体修飾"
+    },
+    {
+      "id": "emv7l02jw6",
+      "from": "nmv7l02jw2",
+      "to": "nmv7l02jw3",
+      "label": ""
+    },
+    {
+      "id": "emv7l02jw7",
+      "from": "nmv7l02jw3",
+      "to": "nmv7l02jw4",
+      "label": ""
+    }
+  ]
+}
