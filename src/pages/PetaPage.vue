@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+/**
+ * PetaPage.vue — halaman studio peta kalimat.
+ * Status simpan & aksi "Bersihkan" didelegasikan ke src/core/useMapStatus.ts
+ * dan src/core/useMapClear.ts; komponen anak merakit logikanya sendiri dari
+ * src/core (lihat MapCanvas, MapPalette, MapInspector).
+ */
+import { onMounted, ref } from 'vue'
 import { useMapStore } from '../composables/useMapStore.ts'
-import { useConfirm } from '../composables/useConfirm.ts'
+import { useMapStatus } from '../core/useMapStatus.ts'
+import { useMapClear } from '../core/useMapClear.ts'
+import type { MapSelection } from '../core/useMapInspector.ts'
 import MapPalette from '../components/map/MapPalette.vue'
 import MapCanvas from '../components/map/MapCanvas.vue'
 import MapInspector from '../components/map/MapInspector.vue'
 
-const { loadMap, loading, saving, saveError, lastSavedAt, nodes, clearAll } = useMapStore()
-const { confirmDialog } = useConfirm()
+const { loadMap } = useMapStore()
 
 onMounted(loadMap)
 
 /** Pilihan aktif di kanvas: { type: 'node'|'edge', id } atau null. */
-type Selection = { type: 'node' | 'edge'; id: string } | null
-const selected = ref<Selection>(null)
+const selected = ref<MapSelection>(null)
 
 function onSelect(type: string | null, id: string | null) {
   selected.value = type && id ? { type: type as 'node' | 'edge', id } : null
@@ -25,37 +31,9 @@ function clearSelection() {
 
 const canvasRef = ref<InstanceType<typeof MapCanvas> | null>(null)
 
-const statusText = computed(() => {
-  if (loading.value) return 'Memuat…'
-  if (saveError.value) return saveError.value
-  if (saving.value) return 'Menyimpan…'
-  if (lastSavedAt.value) {
-    return `Tersimpan ${lastSavedAt.value.toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-    })}`
-  }
-  return 'Siap — perubahan tersimpan otomatis'
-})
-
-const statusClass = computed(() => ({
-  'is-saving': saving.value,
-  'is-error': !!saveError.value,
-}))
-
-async function onClear() {
-  if (nodes.value.length === 0) return
-  const ok = await confirmDialog({
-    title: 'Bersihkan kanvas?',
-    message: 'Seluruh node dan garis pada peta ini akan dihapus. Tindakan ini tidak bisa dibatalkan.',
-    confirmText: 'Bersihkan',
-    cancelText: 'Batal',
-    danger: true,
-  })
-  if (!ok) return
-  clearAll()
-  clearSelection()
-}
+/* ---------- Status pill & bersihkan kanvas (core) ---------- */
+const { statusText, statusClass } = useMapStatus()
+const { onClear } = useMapClear(clearSelection)
 </script>
 
 <template>

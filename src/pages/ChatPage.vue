@@ -1,37 +1,32 @@
 <script setup lang="ts">
 // =====================================================================
-// ChatPage.vue — render teks dipindah ke src/core/renderRich.ts.
+// ChatPage.vue — render teks dipindah ke src/core/renderRich.ts;
+// draf, scroll otomatis, dan pengiriman pesan dirakit core/useChatDraft.ts.
 // =====================================================================
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatAgent } from '../composables/useChatAgent.ts'
 import type { ChatMode } from '../types.ts'
 import { renderRich } from '../core/renderRich.ts'
+import { useChatDraft } from '../core/useChatDraft.ts'
 
 const router = useRouter()
-const { messages, typing, mode, aiReady, aiModel, setMode, init, send, clear, suggestionChips } =
-  useChatAgent()
+const agent = useChatAgent()
+const { messages, typing, mode, aiReady, aiModel, setMode, init, clear, suggestionChips } = agent
 
-const draft = ref('')
-const boxEl = ref<HTMLDivElement | null>(null)
+/* ---------- Draf & auto-scroll (core) ---------- */
+const { draft, boxEl, scrollBottom, onSend: sendText } = useChatDraft(agent)
 const chips = suggestionChips()
 
-function scrollBottom(smooth = true) {
-  nextTick(() => {
-    boxEl.value?.scrollTo({ top: boxEl.value.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
-  })
-}
-
+/** Kirim teks; bila agen mengembalikan rute, navigasi setelah jeda pendek. */
 async function onSend(text: string) {
-  const route = await send(text)
-  draft.value = ''
-  scrollBottom()
+  const t = text.trim()
+  if (!t || typing.value) return
+  const route = await sendText(t)
   if (route) {
     setTimeout(() => router.push(route), 700)
   }
 }
-
-watch([messages, typing], () => scrollBottom(), { deep: true })
 
 onMounted(() => {
   init()

@@ -1,61 +1,19 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import type { MapRole, ShapeDef } from '../../types.ts'
-import { ROLES, SHAPE_DEFS, useMapStore } from '../../composables/useMapStore.ts'
+// =====================================================================
+// MapInspector.vue — logika panel properti didelegasikan ke
+// src/core/useMapInspector.ts (node/edge terpilih + aksi edit & hapus).
+// =====================================================================
+import { ROLES, SHAPE_DEFS } from '../../composables/useMapStore.ts'
+import { useMapInspector, type MapSelection } from '../../core/useMapInspector.ts'
 
-/** Pilihan aktif: { type: 'node'|'edge', id } atau null. */
-type Selection = { type: 'node' | 'edge'; id: string } | null
-
-const props = defineProps<{ selected?: Selection }>()
+const props = defineProps<{ selected?: MapSelection }>()
 const emit = defineEmits<{ clear: [] }>()
 
-const { nodes, edges, updateNode, removeNode, updateEdge, removeEdge } = useMapStore()
-
-const node = computed(() => {
-  const sel = props.selected
-  if (sel?.type !== 'node') return null
-  return nodes.value.find((n) => n.id === sel.id) ?? null
-})
-
-const edge = computed(() => {
-  const sel = props.selected
-  if (sel?.type !== 'edge') return null
-  return edges.value.find((e) => e.id === sel.id) ?? null
-})
-
-function onRoleChange(e: Event) {
-  if (node.value) updateNode(node.value.id, { role: (e.target as HTMLSelectElement).value })
-}
-
-function onShapeClick(shape: ShapeDef) {
-  if (!node.value) return
-  updateNode(node.value.id, { shape: shape.id, w: shape.w, h: shape.h })
-}
-
-function onTextInput(e: Event) {
-  if (node.value) updateNode(node.value.id, { text: (e.target as HTMLTextAreaElement).value })
-}
-
-function deleteNode() {
-  if (!node.value) return
-  removeNode(node.value.id)
-  emit('clear')
-}
-
-function onLabelInput(e: Event) {
-  if (edge.value) updateEdge(edge.value.id, { label: (e.target as HTMLInputElement).value })
-}
-
-function flipEdge() {
-  if (!edge.value) return
-  updateEdge(edge.value.id, { from: edge.value.to, to: edge.value.from })
-}
-
-function deleteEdge() {
-  if (!edge.value) return
-  removeEdge(edge.value.id)
-  emit('clear')
-}
+const {
+  node, edge,
+  onRoleChange, onShapeClick, onTextInput, deleteNode,
+  onLabelInput, flipEdge, deleteEdge,
+} = useMapInspector(() => props.selected ?? null, () => emit('clear'))
 </script>
 
 <template>
