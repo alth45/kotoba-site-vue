@@ -6,6 +6,7 @@ import NotePage from '../pages/NotePage.vue'
 import ChatPage from '../pages/ChatPage.vue'
 import ResourcePage from '../pages/ResourcePage.vue'
 import SitusGroupPage from '../pages/SitusGroupPage.vue'
+import SitusViewerPage from '../pages/SitusViewerPage.vue'
 
 const routes: RouteRecordRaw[] = [
   { path: '/', name: 'home', component: HomePage },
@@ -15,6 +16,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/chat', name: 'chat', component: ChatPage },
   { path: '/resource', name: 'resource', component: ResourcePage },
   { path: '/situsgroup', name: 'situsgroup', component: SitusGroupPage },
+  { path: '/situsgroup/view', name: 'situsgroup-view', component: SitusViewerPage },
 ]
 
 export default createRouter({

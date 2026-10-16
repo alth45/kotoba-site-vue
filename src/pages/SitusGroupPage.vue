@@ -12,6 +12,7 @@ import { useSitusGroup } from '../core/useSitusGroup.ts'
 const {
   activeCategory, allLinks, categories, filtered, pinnedLinks, normalLinks,
   form, formError, justAdded, addLink, removeLink, togglePin, isUserLink,
+  openLinkInternal,
 } = useSitusGroup()
 </script>
 
@@ -108,10 +109,10 @@ const {
             v-for="link in pinnedLinks"
             :key="link.id"
             :href="link.url"
-            target="_blank"
-            rel="noopener noreferrer"
             class="link-card pinned"
             :class="{ 'just-added': justAdded === link.id }"
+            title="Klik untuk membuka di dalam web (tanpa tab baru)"
+            @click.prevent="openLinkInternal(link)"
           >
             <span class="card-cat-bar" :style="{ background: sgGetCategoryColor(link.category) }"></span>
             <div class="card-inner">
@@ -159,10 +160,10 @@ const {
           v-for="link in normalLinks"
           :key="link.id"
           :href="link.url"
-          target="_blank"
-          rel="noopener noreferrer"
           class="link-card"
           :class="{ 'just-added': justAdded === link.id }"
+          title="Klik untuk membuka di dalam web (tanpa tab baru)"
+          @click.prevent="openLinkInternal(link)"
         >
           <span class="card-cat-bar" :style="{ background: sgGetCategoryColor(link.category) }"></span>
           <div class="card-inner">
