@@ -10,6 +10,13 @@
  *
  * Bila folder dist/ sudah ada (hasil `npm run build`), server ini juga
  * menyajikan halaman statis + fallback SPA. Jalankan: npm start
+ *
+ * Konkurensi:
+ * - Semua operasi tulis file JSON (vocab, map, note) diserialisasi lewat
+ *   `withWriteLock()` sehingga tidak ada read-modify-write yang saling menimpa.
+ * - Penulisan file bersifat atomik (tulis ke file temporer → fsync → rename),
+ *   jadi pembaca tidak pernah melihat file setengah jadi dan crash di tengah
+ *   proses tidak merusak data lama.
  */
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -20,7 +27,13 @@ import OpenAI from 'openai'
 
 const dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.join(dirname, '..')
-const DATA_FILE = path.join(ROOT_DIR, 'data', 'vocab.json')
+
+/** Folder data bisa dialihkan lewat env — dipakai test agar tidak menyentuh data asli. */
+const DATA_DIR = process.env.KOTOBA_DATA_DIR
+  ? path.resolve(process.env.KOTOBA_DATA_DIR)
+  : path.join(ROOT_DIR, 'data')
+
+const DATA_FILE = path.join(DATA_DIR, 'vocab.json')
 const DIST_DIR = path.join(ROOT_DIR, 'dist')
 const PORT = Number(process.env.PORT) || 3000
 
@@ -34,15 +47,15 @@ const CHAT_MODEL = process.env.TOKENHARBOR_MODEL || 'deepseek-v4.1-flash:free'
 const CHAT_TIMEOUT_MS = 30000
 
 /** File dokumen peta kalimat. */
-const MAP_FILE = path.join(ROOT_DIR, 'data', 'map.json')
+const MAP_FILE = path.join(DATA_DIR, 'map.json')
 const EMPTY_MAP = { nodes: [], edges: [] }
 
 /** File catatan (notepad kaya format). */
-const NOTE_FILE = path.join(ROOT_DIR, 'data', 'notes.json')
+const NOTE_FILE = path.join(DATA_DIR, 'notes.json')
 const NOTE_MAX_BYTES = 400_000
 
 /** Folder & batas upload gambar catatan. */
-const UPLOAD_DIR = path.join(ROOT_DIR, 'data', 'uploads')
+const UPLOAD_DIR = path.join(DATA_DIR, 'uploads')
 const IMG_MAX_BYTES = 3 * 1024 * 1024
 interface ImageTypeDef {
   mime: string
@@ -54,27 +67,6 @@ const IMG_TYPES: Record<string, ImageTypeDef> = {
   jpg: { mime: 'image/jpeg', magic: [[0xff, 0xd8, 0xff]] },
   gif: { mime: 'image/gif', magic: [[0x47, 0x49, 0x46, 0x38]] },
   webp: { mime: 'image/webp', magic: null }, // dicek via header RIFF....WEBP
-}
-
-/** Data awal dipakai hanya bila file JSON belum pernah dibuat. */
-const SEED = [
-  { id: 1, jp: 'こんにちは', romaji: 'konnichiwa', arti: 'Halo, selamat siang', kategori: 'Salam' },
-  { id: 2, jp: 'おはよう', romaji: 'ohayou', arti: 'Selamat pagi', kategori: 'Salam' },
-  { id: 3, jp: 'ありがとう', romaji: 'arigatou', arti: 'Terima kasih', kategori: 'Sopan' },
-  { id: 4, jp: 'すみません', romaji: 'sumimasen', arti: 'Permisi, maaf', kategori: 'Sopan' },
-  { id: 5, jp: 'はい', romaji: 'hai', arti: 'Ya', kategori: 'Dasar' },
-  { id: 6, jp: 'いいえ', romaji: 'iie', arti: 'Tidak', kategori: 'Dasar' },
-  { id: 7, jp: 'お願いします', romaji: 'onegaishimasu', arti: 'Tolong, mohon bantu', kategori: 'Sopan' },
-  { id: 8, jp: 'さようなら', romaji: 'sayounara', arti: 'Selamat tinggal', kategori: 'Salam' },
-]
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body, null, 2)
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
-  })
-  res.end(payload)
 }
 
 /** Butir kosakata di file JSON bisa saja tidak rapi — dinormalisasi saat dibaca. */
@@ -90,6 +82,108 @@ interface VocabItem {
 
 type RawItem = Record<string, unknown>
 
+/** Data awal dipakai hanya bila file JSON belum pernah dibuat. */
+const SEED = [
+  { id: 1, jp: 'こんにちは', romaji: 'konnichiwa', arti: 'Halo, selamat siang', kategori: 'Salam' },
+  { id: 2, jp: 'おはよう', romaji: 'ohayou', arti: 'Selamat pagi', kategori: 'Salam' },
+  { id: 3, jp: 'ありがとう', romaji: 'arigatou', arti: 'Terima kasih', kategori: 'Sopan' },
+  { id: 4, jp: 'すみません', romaji: 'sumimasen', arti: 'Permisi, maaf', kategori: 'Sopan' },
+  { id: 5, jp: 'はい', romaji: 'hai', arti: 'Ya', kategori: 'Dasar' },
+  { id: 6, jp: 'いいえ', romaji: 'iie', arti: 'Tidak', kategori: 'Dasar' },
+  { id: 7, jp: 'お願いします', romaji: 'onegaishimasu', arti: 'Tolong, mohon bantu', kategori: 'Sopan' },
+  { id: 8, jp: 'さようなら', romaji: 'sayounara', arti: 'Selamat tinggal', kategori: 'Salam' },
+]
+
+/* ---------- Error HTTP ---------- */
+
+/** Error dengan status code, supaya handler bisa mengembalikan 4xx alih-alih 500. */
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'HttpError'
+  }
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body, null, 2)
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+  })
+  res.end(payload)
+}
+
+/* ---------- Konkurensi: kunci tulis per-berkas + tulis atomik ---------- */
+
+/** Kunci antrean tulis per-berkas. */
+const LOCK_VOCAB = 'vocab'
+const LOCK_MAP = 'map'
+const LOCK_NOTE = 'note'
+
+const writeQueues = new Map<string, Promise<unknown>>()
+
+function noop(): void {}
+
+/**
+ * Jalankan `task` secara eksklusif untuk `key` (write queue / mutex).
+ *
+ * Semua siklus "baca seluruh file → ubah di memori → tulis ulang" WAJIB lewat
+ * sini. Tanpa ini dua request paralel bisa membaca state lama yang sama lalu
+ * saling menimpa: item hilang (lost update), id duplikat, `index` kacau, atau
+ * file JSON korup.
+ *
+ * PENTING: jangan memanggil `withWriteLock()` dengan `key` yang sama dari dalam
+ * `task` yang sedang berjalan — tugas itu akan mengantre di belakang dirinya
+ * sendiri dan menggantung selamanya.
+ */
+function withWriteLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const previous = writeQueues.get(key) ?? Promise.resolve()
+  // `then(task, task)` → tugas tetap dijalankan walau operasi sebelumnya gagal.
+  const run = previous.then(task, task)
+  // Rantai antrean tidak boleh menyimpan rejection agar tidak "macet".
+  const tail = run.then(noop, noop)
+  writeQueues.set(key, tail)
+  // Bersihkan entri bila sudah tidak ada penerus (mencegah kebocoran memori).
+  void tail.then(() => {
+    if (writeQueues.get(key) === tail) writeQueues.delete(key)
+  })
+  return run
+}
+
+/**
+ * Tulis file secara atomik: tulis ke berkas temporer di folder yang sama,
+ * `fsync`, lalu `rename()`. `rename` bersifat atomik di POSIX sehingga pembaca
+ * hanya melihat isi lama atau isi baru — tidak pernah setengah jadi.
+ */
+async function writeFileAtomic(filePath: string, data: string | Uint8Array): Promise<void> {
+  const dir = path.dirname(filePath)
+  await fs.mkdir(dir, { recursive: true })
+  const tmp = path.join(
+    dir,
+    `.${path.basename(filePath)}.${process.pid}.${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.tmp`,
+  )
+  try {
+    const handle = await fs.open(tmp, 'w')
+    try {
+      await handle.writeFile(data)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await fs.rename(tmp, filePath)
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
+}
+
+/* ---------- Kosakata ---------- */
+
 function normalizeItem(raw: RawItem, index: number): VocabItem {
   return {
     // id tetap 1-based (untuk API), index posisi 0-based (untuk lompat halaman).
@@ -103,21 +197,23 @@ function normalizeItem(raw: RawItem, index: number): VocabItem {
 }
 
 async function saveVocab(list: VocabItem[]): Promise<void> {
-  await fs.mkdir(path.dirname(DATA_FILE), { recursive: true })
-  const payload = JSON.stringify(list, null, 2) + '\n'
-  await fs.writeFile(DATA_FILE, payload, 'utf8')
+  await writeFileAtomic(DATA_FILE, JSON.stringify(list, null, 2) + '\n')
 }
 
+/**
+ * Baca seluruh daftar kosakata.
+ *
+ * Tidak pernah menulis: bila file belum ada, data awal (SEED) dikembalikan
+ * hanya di memori dan file baru dibuat saat ada operasi tulis pertama. Ini
+ * menghindari "write di dalam read" yang bisa membalap operasi tulis lain.
+ */
 async function loadVocab(): Promise<VocabItem[]> {
-  let raw
+  let raw: string
   try {
     raw = await fs.readFile(DATA_FILE, 'utf8')
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      // File belum ada → buat dari data awal.
-      const seed = SEED.map((item) => ({ ...item }))
-      await saveVocab(seed)
-      return seed
+      return SEED.map((item, i) => normalizeItem({ ...item }, i))
     }
     throw err
   }
@@ -132,6 +228,31 @@ function nextId(list: VocabItem[]): number {
   return list.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1
 }
 
+/**
+ * Siklus baca → ubah → tulis untuk data/vocab.json, seluruhnya di dalam kunci
+ * tulis. `index` dinormalkan ulang sebelum & sesudah mutator agar tetap
+ * konsisten walau file JSON pernah diedit manual.
+ *
+ * `nextId()` dipanggil di dalam mutator — yaitu di dalam critical section —
+ * sehingga dua POST paralel tidak mungkin mendapat id yang sama.
+ */
+function mutateVocab<T>(mutator: (list: VocabItem[]) => T): Promise<T> {
+  return withWriteLock(LOCK_VOCAB, async () => {
+    const list = await loadVocab()
+    list.forEach((item, i) => {
+      item.index = i
+    })
+    const result = mutator(list)
+    list.forEach((item, i) => {
+      item.index = i
+    })
+    await saveVocab(list)
+    return result
+  })
+}
+
+/* ---------- Pembacaan body ---------- */
+
 function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -139,13 +260,41 @@ function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
     req.on('data', (chunk) => {
       size += chunk.length
       if (size > maxBytes) {
-        reject(new Error('Ukuran file melebihi batas 3 MB.'))
         req.destroy()
+        reject(new HttpError(413, 'Ukuran file melebihi batas 3 MB.'))
         return
       }
       chunks.push(chunk)
     })
     req.on('end', () => resolve(Buffer.concat(chunks)))
+    req.on('error', reject)
+  })
+}
+
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > 1_000_000) {
+        req.destroy()
+        reject(new HttpError(413, 'Body terlalu besar (maks 1 MB).'))
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (chunks.length === 0) {
+        resolve({})
+        return
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
+      } catch {
+        reject(new HttpError(400, 'Body bukan JSON yang valid.'))
+      }
+    })
     req.on('error', reject)
   })
 }
@@ -200,33 +349,7 @@ function detectImageExt(buf: Buffer, mime: string): string | null {
   return null
 }
 
-function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    let size = 0
-    const chunks: Buffer[] = []
-    req.on('data', (chunk) => {
-      size += chunk.length
-      if (size > 1_000_000) {
-        req.destroy()
-        reject(new Error('Body terlalu besar (maks 1 MB).'))
-        return
-      }
-      chunks.push(chunk)
-    })
-    req.on('end', () => {
-      if (chunks.length === 0) {
-        resolve({})
-        return
-      }
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>)
-      } catch {
-        reject(new Error('Body bukan JSON yang valid.'))
-      }
-    })
-    req.on('error', reject)
-  })
-}
+/* ---------- Endpoint kosakata ---------- */
 
 interface ValidatedEntry {
   jp: string
@@ -280,20 +403,21 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
       sendJson(res, 200, { total: list.length, offset, items })
       return
     }
+
     if (req.method === 'POST') {
       const body = await readBody(req)
-      const { entry, error } = validateEntry(body) as { entry?: ValidatedEntry; error?: string }
-      if (error) {
-        sendJson(res, 400, { error })
+      const { entry, error } = validateEntry(body)
+      if (error || !entry) {
+        sendJson(res, 400, { error: error ?? 'Data tidak valid.' })
         return
       }
-      const list = await loadVocab()
-      // Index bisa bergeser bila file JSON diedit manual — dinormalkan ulang.
-      list.forEach((item, i) => { item.index = i })
-      const item: VocabItem = { id: nextId(list), index: list.length, ...entry! }
-      list.push(item)
-      await saveVocab(list)
-      sendJson(res, 201, { item, total: list.length })
+      // Baca → tentukan id → push → tulis, semuanya di dalam satu kunci tulis.
+      const { item, total } = await mutateVocab((list) => {
+        const created: VocabItem = { id: nextId(list), index: list.length, ...entry }
+        list.push(created)
+        return { item: created, total: list.length }
+      })
+      sendJson(res, 201, { item, total })
       return
     }
   }
@@ -306,34 +430,39 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL): P
     if (req.method === 'PUT') {
       const body = await readBody(req)
       const { entry, error } = validateEntry(body)
-      if (error) {
-        sendJson(res, 400, { error })
+      if (error || !entry) {
+        sendJson(res, 400, { error: error ?? 'Data tidak valid.' })
         return
       }
-      const list = await loadVocab()
-      const index = list.findIndex((item) => item.id === id)
-      if (index === -1) {
+      const updated = await mutateVocab((list) => {
+        const index = list.findIndex((item) => item.id === id)
+        if (index === -1) return null
+        const next: VocabItem = { id, index, ...entry }
+        list[index] = next
+        return next
+      })
+      if (!updated) {
         sendJson(res, 404, { error: `Kosakata dengan id ${id} tidak ditemukan.` })
         return
       }
-      list[index] = { id, index, ...entry! }
-      await saveVocab(list)
-      sendJson(res, 200, list[index])
+      sendJson(res, 200, updated)
       return
     }
 
     if (req.method === 'DELETE') {
-      const list = await loadVocab()
-      const index = list.findIndex((item) => item.id === id)
-      if (index === -1) {
+      const removed = await mutateVocab((list) => {
+        const index = list.findIndex((item) => item.id === id)
+        if (index === -1) return null
+        list.splice(index, 1)
+        // Index pergeser setelah penghapusan — mutateVocab menormalkan ulang
+        // sebelum menyimpan, jadi di sini cukup kembalikan posisi lama.
+        return { index, total: list.length }
+      })
+      if (!removed) {
         sendJson(res, 404, { error: `Kosakata dengan id ${id} tidak ditemukan.` })
         return
       }
-      const next = list.filter((item) => item.id !== id)
-      // Index pergeser setelah penghapusan — dinormalkan ulang sebelum disimpan.
-      next.forEach((item, i) => { item.index = i })
-      await saveVocab(next)
-      sendJson(res, 200, { ok: true, total: next.length, index })
+      sendJson(res, 200, { ok: true, total: removed.total, index: removed.index })
       return
     }
   }
@@ -415,8 +544,10 @@ async function handleMap(req: IncomingMessage, res: ServerResponse, url: URL): P
   if (req.method === 'PUT') {
     const body = await readBody(req)
     const map = sanitizeMap(body)
-    await fs.mkdir(path.dirname(MAP_FILE), { recursive: true })
-    await fs.writeFile(MAP_FILE, JSON.stringify(map, null, 2) + '\n', 'utf8')
+    // Seluruh file ditimpa — jalankan di antrean agar tidak membalap tulis lain.
+    await withWriteLock(LOCK_MAP, () =>
+      writeFileAtomic(MAP_FILE, JSON.stringify(map, null, 2) + '\n'),
+    )
     sendJson(res, 200, { ok: true, nodes: map.nodes.length, edges: map.edges.length })
     return true
   }
@@ -468,7 +599,9 @@ async function handleNoteImage(req: IncomingMessage, res: ServerResponse, url: U
     const raw = await readRawBody(req, IMG_MAX_BYTES + 64 * 1024)
     file = parseMultipartImage(raw, req.headers['content-type'])
   } catch (err) {
-    sendJson(res, 413, { error: (err as Error).message || 'File terlalu besar.' })
+    sendJson(res, err instanceof HttpError ? err.status : 413, {
+      error: (err as Error).message || 'File terlalu besar.',
+    })
     return true
   }
   if (!file || !file.data.length) {
@@ -484,9 +617,9 @@ async function handleNoteImage(req: IncomingMessage, res: ServerResponse, url: U
     sendJson(res, 413, { error: 'Ukuran file melebihi batas 3 MB.' })
     return true
   }
+  // Nama file unik per upload → tidak ada dua request yang menulis path sama.
   const name = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}.${ext}`
-  await fs.mkdir(UPLOAD_DIR, { recursive: true })
-  await fs.writeFile(path.join(UPLOAD_DIR, name), file.data)
+  await writeFileAtomic(path.join(UPLOAD_DIR, name), file.data)
   sendJson(res, 200, { url: `/uploads/${name}` })
   return true
 }
@@ -509,8 +642,9 @@ async function handleNote(req: IncomingMessage, res: ServerResponse, url: URL): 
   if (req.method === 'PUT') {
     const body = await readBody(req)
     const content = sanitizeNoteHtml(body?.content)
-    await fs.mkdir(path.dirname(NOTE_FILE), { recursive: true })
-    await fs.writeFile(NOTE_FILE, JSON.stringify({ content }, null, 2) + '\n', 'utf8')
+    await withWriteLock(LOCK_NOTE, () =>
+      writeFileAtomic(NOTE_FILE, JSON.stringify({ content }, null, 2) + '\n'),
+    )
     sendJson(res, 200, { ok: true, bytes: Buffer.byteLength(content) })
     return true
   }
@@ -538,6 +672,7 @@ function getChatClient() {
   }
   return chatClient
 }
+
 async function handleChat(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname === '/api/chat/status' && req.method === 'GET') {
     sendJson(res, 200, {
@@ -715,7 +850,9 @@ const server = http.createServer(async (req: IncomingMessage, res: ServerRespons
     }
     sendJson(res, 405, { error: 'Metode tidak diizinkan.' })
   } catch (err) {
-    sendJson(res, 500, { error: (err as Error).message || 'Kesalahan server.' })
+    sendJson(res, err instanceof HttpError ? err.status : 500, {
+      error: (err as Error).message || 'Kesalahan server.',
+    })
   }
 })
 
