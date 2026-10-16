@@ -47,6 +47,7 @@ export const navItems: NavItem[] = [
   { label: 'Catatan', page: '/catatan' },
   { label: 'Chat', page: '/chat' },
   { label: 'Resource', page: '/resource' },
+  { label: 'SitusGroup', page: '/situsgroup' },
   { label: 'FAQ', target: 3 },
   { label: 'Kontak', target: 4 },
 ]
