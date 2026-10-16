@@ -2,8 +2,12 @@
  * core/useSitusGroup.ts
  * Composable state & aksi untuk halaman SitusGroup.
  * Data/statistik murni ada di ./situsGroup.ts — di sini hanya orkestrasi reaktif.
+ * Termasuk "viewer internal": klik kartu tidak membuka tab baru, melainkan
+ * berpindah ke halaman render (route /situsgroup/view) yang menampilkan
+ * situs tersebut lewat iframe di dalam web ini.
  */
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   loadSitusLinks,
   makeSitusUserLink,
@@ -13,10 +17,34 @@ import {
   type SitusGroupLink,
 } from './situsGroup.ts'
 
+/* ================================================================
+   VIEWER STATE (shared antar halaman grid & halaman render)
+   ================================================================ */
+let viewerLink: SitusGroupLink | null = null
+
+/** Simpan link yang akan dirender lalu pindah route ke halaman viewer. */
+function openInViewer(link: SitusGroupLink) {
+  viewerLink = link
+}
+
+/** Ambil link yang sedang/akan dirender; fallback dari sessionStorage. */
+function getViewerLink(): SitusGroupLink | null {
+  if (viewerLink) return viewerLink
+  try {
+    const raw = sessionStorage.getItem('kotoba-situsgroup-viewer')
+    if (raw) {
+      viewerLink = JSON.parse(raw) as SitusGroupLink
+      return viewerLink
+    }
+  } catch { /* abaikan */ }
+  return null
+}
+
 export function useSitusGroup() {
   /* ================================================================
      STATE
      ================================================================ */
+  const router = useRouter()
   const userLinks = ref<SitusGroupLink[]>(loadSitusLinks())
   const activeCategory = ref('Semua')
 
@@ -77,6 +105,24 @@ export function useSitusGroup() {
     }
   }
 
+  /* ================================================================
+     VIEWER INTERNAL — render situs di halaman ini, bukan tab baru
+     ================================================================ */
+  /** Klik kartu: simpan link + sinkron ke sessionStorage lalu pindah page. */
+  function openLinkInternal(link: SitusGroupLink) {
+    openInViewer(link)
+    try { sessionStorage.setItem('kotoba-situsgroup-viewer', JSON.stringify(link)) } catch { /* abaikan */ }
+    router.push({ name: 'situsgroup-view' })
+  }
+
+  /** Link aktif untuk halaman viewer (null bila tidak ada). */
+  const viewerActive = ref<SitusGroupLink | null>(getViewerLink())
+
+  // Saat meninggalkan komponen, reset penanda module-level agar tidak bocor ke halaman lain
+  onBeforeUnmount(() => {
+    viewerLink = null
+  })
+
   const isUserLink = (id: string) => userLinks.value.some((l) => l.id === id)
 
   return {
@@ -94,5 +140,7 @@ export function useSitusGroup() {
     removeLink,
     togglePin,
     isUserLink,
+    openLinkInternal,
+    viewerActive,
   }
 }
